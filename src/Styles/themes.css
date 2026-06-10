@@ -1,0 +1,208 @@
+.theme-gogeta {
+  --bg: #05060a;
+  --bg-alt: #0b1020;
+  --fg: #e8f0ff;
+  --fg-muted: #7a8ba5;
+  --prompt: #00d4ff;
+  --cwd: #ff6b35;
+  --error: #ff4757;
+  --border: rgba(255, 255, 255, 0.08);
+  --caret: #00d4ff;
+  --glass: rgba(255, 255, 255, 0.03);
+  --glass-hover: rgba(255, 255, 255, 0.05);
+}
+
+.theme-classic {
+  --bg: #1e1e1e;
+  --bg-alt: #252526;
+  --fg: #d4d4d4;
+  --fg-muted: #858585;
+  --prompt: #4ec9b0;
+  --cwd: #569cd6;
+  --error: #f44747;
+  --border: rgba(255, 255, 255, 0.06);
+  --caret: #d4d4d4;
+  --glass: rgba(255, 255, 255, 0.02);
+  --glass-hover: rgba(255, 255, 255, 0.04);
+}
+.theme-black {
+  --bg: #000000;
+  --bg-alt: #000000;
+  --fg: #ffffff;
+  --fg-muted: #b3b3b3;
+  --prompt: #ffffff;
+  --cwd: #ffffff;
+  --error: #ff0000;
+  --border: rgba(255, 255, 255, 0.15);
+  --caret: #ffffff;
+  --glass: rgba(0, 0, 0, 0.95);
+  --glass-hover: rgba(20, 20, 20, 1);
+}
+.theme-white {
+  --bg: #ffffff;
+  --bg-alt: #f5f5f5;
+  --fg: #000000;
+  --fg-muted: #4d4d4d;
+  --prompt: #0066cc;
+  --cwd: #cc0000;
+  --error: #d60000;
+  --border: rgba(0, 0, 0, 0.15);
+  --caret: #000000;
+  --glass: rgba(255, 255, 255, 0.85);
+  --glass-hover: rgba(245, 245, 245, 0.95);
+}
+/* === HEADER + SHORTCUT DROPDOWN === */
+.app-container {
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  position: relative;
+  background: var(--glass);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 100;
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.header-right {
+  justify-content: flex-end;
+}
+
+.header-center {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  flex: 0;
+}
+
+.header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: 0.5px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.status-dot.active {
+  background: #00ff88;
+  box-shadow: 0 0 8px #00ff88;
+}
+
+.status-dot.inactive {
+  background: var(--error);
+  box-shadow: 0 0 8px var(--error);
+}
+
+.header-btn {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.header-btn:hover {
+  background: var(--glass-hover);
+  border-color: var(--prompt);
+}
+
+.shortcut-btn {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.shortcut-btn:hover {
+  background: var(--glass-hover);
+  border-color: var(--prompt);
+}
+
+.shortcut-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 8px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 1000;
+  min-width: 260px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.term-btn {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--prompt);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.term-btn:active {
+  background: var(--prompt);
+  color: var(--bg);
+  transform: scale(0.95);
+}
+
+/* Terminal base styles */
+.terminal {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--bg);
+}
