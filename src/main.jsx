@@ -1,7 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './app.jsx'
-
+import { Buffer } from 'buffer'
+window.Buffer = Buffer
+window.global = window.globalThis
 import './styles/mainTerminal.css'
 import './styles/themes.css'
 import './features/ui/Header.css'

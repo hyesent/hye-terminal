@@ -21,5 +21,20 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin'
     }
+  },
+  define: {
+    'global': 'globalThis', // Fix: isomorphic-git needs global
+  },
+  resolve: {
+    alias: {
+      buffer: 'buffer', // Fix: Polyfill Buffer for git
+    }
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      define: {
+        global: 'globalThis' // Fix: For esbuild
+      }
+    }
   }
 })
