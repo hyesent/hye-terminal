@@ -2,7 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './app.jsx'
 
-import './styles/terminal.css'
+import './styles/mainTerminal.css'
 import './styles/themes.css'
 import './features/ui/Header.css'
 import './features/terminal/Terminal.css'
