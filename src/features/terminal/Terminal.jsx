@@ -10,7 +10,6 @@ import Prompt from './Prompt'
 let webcontainerInstance = null
 const fs = new FS('fs')
 const HYE_API = 'https://hye-api.onrender.com'
-const isNative = window.Capacitor?.isNativePlatform?.() || false
 
 const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const [blocks, setBlocks] = useState([])
@@ -34,7 +33,11 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       const res = await fetch(`${HYE_API}/exec`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cmd, projectName, cwd: cwd.replace('/HYE-Projects', '') })
+        body: JSON.stringify({
+          cmd,
+          projectName,
+          cwd: cwd.replace('/HYE-Projects', '').replace(/^\/+/, '')
+        })
       })
       return await res.json()
     } catch (e) {
@@ -52,27 +55,26 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     hasBooted.current = true
 
     const boot = async () => {
-      setNotification({ type: 'booting', text: 'Booting HYE Terminal...' })
+      const isCapacitor =!!(window.Capacitor?.isNativePlatform)
 
-      if (isNative) {
+      if (isCapacitor) {
+        setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
+        setTimeout(() => setNotification(null), 2000)
+        setHint('💡 Type "npm --version" to test')
+        setTimeout(() => setHint(null), 5000)
+
         try {
           const perm = await Filesystem.checkPermissions()
           if (perm.publicStorage!== 'granted') await Filesystem.requestPermissions()
-          try {
-            await Filesystem.readdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage })
-          } catch {
-            await Filesystem.mkdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage, recursive: true })
-          }
-        } catch (e) { console.error('Filesystem error:', e) }
-        setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
-        setTimeout(() => setNotification(null), 4000)
-        setHint('💡 Type "help" for commands')
-        setTimeout(() => setHint(null), 10000)
+          await Filesystem.mkdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage, recursive: true })
+        } catch (e) { console.log('FS setup:', e) }
+
         setWcBooted(true)
         return
       }
 
-      // Web: boot WebContainer
+      // Web only: boot WebContainer
+      setNotification({ type: 'booting', text: 'Booting HYE Terminal...' })
       if (!webcontainerInstance) webcontainerInstance = await WebContainer.boot()
       wcRef.current = webcontainerInstance
 
@@ -125,7 +127,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   }
 
   const syncToPhone = async (projectPath) => {
-    if (!isNative) return
+    if (!window.Capacitor?.isNativePlatform()) return
     try {
       const files = await wcRef.current.fs.readdir(projectPath, { withFileTypes: true })
       for (const file of files) {
@@ -179,8 +181,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     const [command,...args] = input.trim().split(/\s+/)
     const fullPath = cwd === '/HYE-Projects'? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
+    const isCapacitor =!!(window.Capacitor?.isNativePlatform)
 
-    // HYE CREATE - works on both
+    // HYE CREATE
     if (command === 'hye' && args[0] === 'create') {
       const template = args[1]
       const projectName = args[2] || `my-${template}-app`
@@ -192,8 +195,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }
       addBlock(input, `📦 Creating ${template} project... ${TEMPLATES[template]}`, null)
 
-      if (isNative) {
-        // Native: just create folders locally
+      if (isCapacitor) {
         try {
           await Filesystem.mkdir({ path: `HYE-Projects/${projectName}`, directory: Directory.ExternalStorage, recursive: true })
           await Filesystem.writeFile({
@@ -214,7 +216,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           addBlock('', null, `Error: ${e.message}`)
         }
       } else {
-        // Web: use WebContainer
         try {
           await wcRef.current.fs.mkdir(`/home/${projectName}`, { recursive: true })
           await wcRef.current.fs.writeFile(`/home/${projectName}/package.json`, JSON.stringify({
@@ -238,7 +239,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     // OPEN
     if (command === 'open') {
-      if (isNative) {
+      if (isCapacitor) {
         try {
           const result = await Filesystem.readdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage })
           addBlock(input, 'Projects:', null)
@@ -259,16 +260,15 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // NPM COMMANDS - Backend on Android, WC on web
+    // NPM COMMANDS
     if (command === 'npm') {
-      if (isNative) {
+      if (isCapacitor) {
         addBlock(input, `Running: ${input}`, null)
         const result = await runBackendExec(input, getProjectName())
         if (result.stdout) addBlock('', result.stdout.trim(), null)
         if (result.stderr) addBlock('', null, result.stderr.trim())
         if (result.code === 0) addBlock('', '✅ Done', null)
       } else {
-        // Your existing WebContainer npm logic
         if (args[0] === 'install' && args[1]) {
           const pkg = args[1]?.replace(/@.*/, '')
           const sizeMB = await getPackageSize(pkg)
@@ -333,12 +333,12 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     // NPX COMMANDS
     if (command === 'npx') {
       if (!args[0]) {
-        addBlock(input, null, 'Usage: npx <package> [args]');
+        addBlock(input, null, 'Usage: npx <package>');
         setIsProcessing(false);
         return
       }
 
-      if (isNative) {
+      if (isCapacitor) {
         addBlock(input, `Running npx ${args[0]}...`, null)
         const result = await runBackendExec(input, getProjectName())
         if (result.stdout) addBlock('', result.stdout.trim(), null)
@@ -367,14 +367,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     // GIT COMMANDS
     if (command === 'git') {
-      if (isNative) {
+      if (isCapacitor) {
         addBlock(input, `Running: ${input}`, null)
         const result = await runBackendExec(input, getProjectName())
         if (result.stdout) addBlock('', result.stdout.trim(), null)
         if (result.stderr) addBlock('', null, result.stderr.trim())
         if (result.code === 0) addBlock('', '💾 Synced', null)
       } else {
-        // Your existing isomorphic-git logic
         addBlock(input, `Running: ${input}`, null)
         try {
           await syncWCtoLFS(fullPath)
@@ -434,7 +433,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     if (['ls', 'cd', 'mkdir', 'cat', 'echo', 'touch', 'rm', 'pwd', 'clear'].includes(command)) {
       if (command === 'clear') { setBlocks([]); setIsProcessing(false); return }
 
-      if (isNative) {
+      if (isCapacitor) {
         if (command === 'cd') {
           const newPath = args[0]?.startsWith('/')? args[0] : `${cwd}/${args[0]}`
           setCwd(newPath.replace('//', '/'))
