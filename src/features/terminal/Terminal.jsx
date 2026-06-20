@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { WebContainer } from '@webcontainer/api'
 import { Filesystem, Directory } from '@capacitor/filesystem'
-import { FilePicker } from '@capawesome/capacitor-file-picker'
+
 import git from 'isomorphic-git'
 import http from 'isomorphic-git/http/web'
 import FS from '@isomorphic-git/lightning-fs'
