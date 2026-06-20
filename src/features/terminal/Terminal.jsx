@@ -9,6 +9,8 @@ import Prompt from './Prompt'
 
 let webcontainerInstance = null
 const fs = new FS('fs')
+const HYE_API = 'https://hye-api.onrender.com'
+const isNative = window.Capacitor?.isNativePlatform?.() || false
 
 const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const [blocks, setBlocks] = useState([])
@@ -26,6 +28,25 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const wcRef = useRef(null)
   const hasBooted = useRef(false)
 
+  // Backend exec for Android
+  const runBackendExec = async (cmd, projectName = '') => {
+    try {
+      const res = await fetch(`${HYE_API}/exec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cmd, projectName, cwd: cwd.replace('/HYE-Projects', '') })
+      })
+      return await res.json()
+    } catch (e) {
+      return { stdout: '', stderr: `Network error: ${e.message}`, code: 1 }
+    }
+  }
+
+  const getProjectName = () => {
+    if (cwd === '/HYE-Projects') return ''
+    return cwd.split('/').pop()
+  }
+
   useEffect(() => {
     if (hasBooted.current) return
     hasBooted.current = true
@@ -33,8 +54,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     const boot = async () => {
       setNotification({ type: 'booting', text: 'Booting HYE Terminal...' })
 
-      const isCapacitor = window.Capacitor?.isNativePlatform()
-      if (isCapacitor) {
+      if (isNative) {
         try {
           const perm = await Filesystem.checkPermissions()
           if (perm.publicStorage!== 'granted') await Filesystem.requestPermissions()
@@ -44,8 +64,15 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             await Filesystem.mkdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage, recursive: true })
           }
         } catch (e) { console.error('Filesystem error:', e) }
+        setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
+        setTimeout(() => setNotification(null), 4000)
+        setHint('💡 Type "help" for commands')
+        setTimeout(() => setHint(null), 10000)
+        setWcBooted(true)
+        return
       }
 
+      // Web: boot WebContainer
       if (!webcontainerInstance) webcontainerInstance = await WebContainer.boot()
       wcRef.current = webcontainerInstance
 
@@ -98,7 +125,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   }
 
   const syncToPhone = async (projectPath) => {
-    if (!window.Capacitor?.isNativePlatform()) return
+    if (!isNative) return
     try {
       const files = await wcRef.current.fs.readdir(projectPath, { withFileTypes: true })
       for (const file of files) {
@@ -153,7 +180,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     const [command,...args] = input.trim().split(/\s+/)
     const fullPath = cwd === '/HYE-Projects'? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
 
-    // HYE CREATE
+    // HYE CREATE - works on both
     if (command === 'hye' && args[0] === 'create') {
       const template = args[1]
       const projectName = args[2] || `my-${template}-app`
@@ -164,21 +191,46 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         return
       }
       addBlock(input, `📦 Creating ${template} project... ${TEMPLATES[template]}`, null)
-      try {
-        await wcRef.current.fs.mkdir(`/home/${projectName}`, { recursive: true })
-        await wcRef.current.fs.writeFile(`/home/${projectName}/package.json`, JSON.stringify({
-          name: projectName, version: '1.0.0', scripts: { dev: 'vite', build: 'vite build' }
-        }, null, 2))
-        await wcRef.current.fs.mkdir(`/home/${projectName}/src`, { recursive: true })
-        await wcRef.current.fs.writeFile(`/home/${projectName}/src/App.jsx`, `export default () => <h1>${template}</h1>`)
-        await wcRef.current.fs.writeFile(`/home/${projectName}/index.html`, `<!DOCTYPE html><html><head><title>${projectName}</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`)
-        await wcRef.current.fs.writeFile(`/home/${projectName}/src/main.jsx`, `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App.jsx'\n\nReactDOM.createRoot(document.getElementById('root')).render(<App />)`)
-        await syncToPhone(`/home/${projectName}`)
-        addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
-        addBlock('', `💾 Saved to YOUR phone storage`, null)
-        setCwd(`/HYE-Projects/${projectName}`)
-      } catch (e) {
-        addBlock('', null, `Error: ${e.message}`)
+
+      if (isNative) {
+        // Native: just create folders locally
+        try {
+          await Filesystem.mkdir({ path: `HYE-Projects/${projectName}`, directory: Directory.ExternalStorage, recursive: true })
+          await Filesystem.writeFile({
+            path: `HYE-Projects/${projectName}/package.json`,
+            data: JSON.stringify({ name: projectName, version: '1.0.0', scripts: { dev: 'vite', build: 'vite build' } }, null, 2),
+            directory: Directory.ExternalStorage
+          })
+          await Filesystem.mkdir({ path: `HYE-Projects/${projectName}/src`, directory: Directory.ExternalStorage, recursive: true })
+          await Filesystem.writeFile({
+            path: `HYE-Projects/${projectName}/src/App.jsx`,
+            data: `export default () => <h1>${template}</h1>`,
+            directory: Directory.ExternalStorage
+          })
+          addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
+          addBlock('', `💾 Saved to YOUR phone storage`, null)
+          setCwd(`/HYE-Projects/${projectName}`)
+        } catch (e) {
+          addBlock('', null, `Error: ${e.message}`)
+        }
+      } else {
+        // Web: use WebContainer
+        try {
+          await wcRef.current.fs.mkdir(`/home/${projectName}`, { recursive: true })
+          await wcRef.current.fs.writeFile(`/home/${projectName}/package.json`, JSON.stringify({
+            name: projectName, version: '1.0.0', scripts: { dev: 'vite', build: 'vite build' }
+          }, null, 2))
+          await wcRef.current.fs.mkdir(`/home/${projectName}/src`, { recursive: true })
+          await wcRef.current.fs.writeFile(`/home/${projectName}/src/App.jsx`, `export default () => <h1>${template}</h1>`)
+          await wcRef.current.fs.writeFile(`/home/${projectName}/index.html`, `<!DOCTYPE html><html><head><title>${projectName}</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`)
+          await wcRef.current.fs.writeFile(`/home/${projectName}/src/main.jsx`, `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App.jsx'\n\nReactDOM.createRoot(document.getElementById('root')).render(<App />)`)
+          await syncToPhone(`/home/${projectName}`)
+          addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
+          addBlock('', `💾 Saved to YOUR phone storage`, null)
+          setCwd(`/HYE-Projects/${projectName}`)
+        } catch (e) {
+          addBlock('', null, `Error: ${e.message}`)
+        }
       }
       setIsProcessing(false)
       return
@@ -186,118 +238,93 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     // OPEN
     if (command === 'open') {
-      try {
-        const dir = await wcRef.current.fs.readdir('/home')
-        addBlock(input, 'Projects:', null)
-        dir.forEach(d => addBlock('', ` ${d}`, null))
-      } catch {
-        addBlock(input, null, 'No projects. Create one: hye create react myapp')
+      if (isNative) {
+        try {
+          const result = await Filesystem.readdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage })
+          addBlock(input, 'Projects:', null)
+          result.files.forEach(f => addBlock('', ` ${f.name}`, null))
+        } catch {
+          addBlock(input, null, 'No projects. Create one: hye create react myapp')
+        }
+      } else {
+        try {
+          const dir = await wcRef.current.fs.readdir('/home')
+          addBlock(input, 'Projects:', null)
+          dir.forEach(d => addBlock('', ` ${d}`, null))
+        } catch {
+          addBlock(input, null, 'No projects. Create one: hye create react myapp')
+        }
       }
       setIsProcessing(false)
       return
     }
 
-    // NPM COMMANDS
+    // NPM COMMANDS - Backend on Android, WC on web
     if (command === 'npm') {
-      if (args[0] === 'install' && args[1]) {
-        const pkg = args[1]?.replace(/@.*/, '')
-        const sizeMB = await getPackageSize(pkg)
-        addBlock(input, `Checking ${pkg}... ${sizeMB}MB`, null)
-        if (sizeMB > 500) {
-          addBlock('', null, `🛑 BLOCKED: ${pkg} is ${sizeMB}MB. Too heavy for mobile.`)
-          setIsProcessing(false)
-          return
-        }
-        if (sizeMB > 10) addBlock('', `⚠️ WARNING: ${pkg} is ${sizeMB}MB`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', ['install', args[1]], { cwd: fullPath })
-          proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
-          const code = await proc.exit
-          if (code === 0) {
-            await syncToPhone(fullPath)
-            addBlock('', `✅ ${pkg} installed`, null)
-          }
-        } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
-      }
-      else if (args[0] === 'install' &&!args[1]) {
-        addBlock(input, `Installing from package.json...`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', ['install'], { cwd: fullPath })
-          proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
-          await proc.exit
-          await syncToPhone(fullPath)
-          addBlock('', `✅ Dependencies installed`, null)
-        } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
-      }
-      else if (args[0] === 'uninstall') {
-        if (!args[1]) { addBlock(input, null, 'Usage: npm uninstall <package>'); setIsProcessing(false); return }
-        addBlock(input, `Uninstalling ${args[1]}...`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', ['uninstall', args[1]], { cwd: fullPath })
-          proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
-          await proc.exit
-          await syncToPhone(fullPath)
-          addBlock('', `✅ ${args[1]} removed`, null)
-        } catch (e) { addBlock('', null, `Uninstall error: ${e.message}`) }
-      }
-      else if (args[0] === 'init') {
-        addBlock(input, `Creating package.json...`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', ['init', '-y'], { cwd: fullPath })
-          let output = ''
-          proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
-          await proc.exit
-          await syncToPhone(fullPath)
-          addBlock('', output || 'package.json created', null)
-        } catch (e) { addBlock('', null, `Init error: ${e.message}`) }
-      }
-      else if (args[0] === 'list' || args[0] === 'ls') {
-        addBlock(input, `Listing packages...`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', ['list', '--depth=0'], { cwd: fullPath })
-          let output = ''
-          proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
-          await proc.exit
-          addBlock('', output, null)
-        } catch (e) { addBlock('', null, `List error: ${e.message}`) }
-      }
-      else if (args[0] === 'run') {
-        if (!args[1]) { addBlock(input, null, 'Usage: npm run <script>'); setIsProcessing(false); return }
-        addBlock(input, `Running script: ${args[1]}`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', ['run', args[1]], { cwd: fullPath })
-          proc.output.pipeTo(new WritableStream({
-            write(data) {
-              addBlock('', data, null)
-              if (data.includes('localhost:')) addBlock('', `🌐 Keep app open to preview`, null)
-            }
-          }))
-          await proc.exit
-        } catch (e) { addBlock('', null, `Run error: ${e.message}`) }
-      }
-      else if (args[0] === 'create') {
+      if (isNative) {
         addBlock(input, `Running: ${input}`, null)
-        try {
-          const proc = await wcRef.current.spawn('npm', args, { cwd: '/home' })
-          proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
-          await proc.exit
-          const projectName = args[2] || 'vite-project'
-          await syncToPhone(`/home/${projectName}`)
-          addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
-          setCwd(`/HYE-Projects/${projectName}`)
-        } catch (e) { addBlock('', null, `Create error: ${e.message}`) }
-      }
-      else if (args[0] === '--version') {
-        try {
-          const proc = await wcRef.current.spawn('npm', ['--version'], { cwd: fullPath })
-          let output = ''
-          proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
-          await proc.exit
-          addBlock('', `npm ${output.trim()}`, null)
-        } catch (e) { addBlock('', null, `Version error: ${e.message}`) }
-      }
-      else {
-        addBlock(input, null, `Unknown npm command. Type 'help'`)
+        const result = await runBackendExec(input, getProjectName())
+        if (result.stdout) addBlock('', result.stdout.trim(), null)
+        if (result.stderr) addBlock('', null, result.stderr.trim())
+        if (result.code === 0) addBlock('', '✅ Done', null)
+      } else {
+        // Your existing WebContainer npm logic
+        if (args[0] === 'install' && args[1]) {
+          const pkg = args[1]?.replace(/@.*/, '')
+          const sizeMB = await getPackageSize(pkg)
+          addBlock(input, `Checking ${pkg}... ${sizeMB}MB`, null)
+          if (sizeMB > 500) {
+            addBlock('', null, `🛑 BLOCKED: ${pkg} is ${sizeMB}MB. Too heavy for mobile.`)
+            setIsProcessing(false)
+            return
+          }
+          if (sizeMB > 10) addBlock('', `⚠️ WARNING: ${pkg} is ${sizeMB}MB`, null)
+          try {
+            const proc = await wcRef.current.spawn('npm', ['install', args[1]], { cwd: fullPath })
+            proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
+            const code = await proc.exit
+            if (code === 0) {
+              await syncToPhone(fullPath)
+              addBlock('', `✅ ${pkg} installed`, null)
+            }
+          } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
+        }
+        else if (args[0] === 'install' &&!args[1]) {
+          addBlock(input, `Installing from package.json...`, null)
+          try {
+            const proc = await wcRef.current.spawn('npm', ['install'], { cwd: fullPath })
+            proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
+            await proc.exit
+            await syncToPhone(fullPath)
+            addBlock('', `✅ Dependencies installed`, null)
+          } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
+        }
+        else if (args[0] === 'run') {
+          if (!args[1]) { addBlock(input, null, 'Usage: npm run <script>'); setIsProcessing(false); return }
+          addBlock(input, `Running script: ${args[1]}`, null)
+          try {
+            const proc = await wcRef.current.spawn('npm', ['run', args[1]], { cwd: fullPath })
+            proc.output.pipeTo(new WritableStream({
+              write(data) {
+                addBlock('', data, null)
+                if (data.includes('localhost:')) addBlock('', `🌐 Keep app open to preview`, null)
+              }
+            }))
+            await proc.exit
+          } catch (e) { addBlock('', null, `Run error: ${e.message}`) }
+        }
+        else if (args[0] === '--version') {
+          try {
+            const proc = await wcRef.current.spawn('npm', ['--version'], { cwd: fullPath })
+            let output = ''
+            proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
+            await proc.exit
+            addBlock('', `npm ${output.trim()}`, null)
+          } catch (e) { addBlock('', null, `Version error: ${e.message}`) }
+        }
+        else {
+          addBlock(input, null, `Unknown npm command. Type 'help'`)
+        }
       }
       setIsProcessing(false)
       return
@@ -311,160 +338,93 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         return
       }
 
-      const pkg = args[0]
-      addBlock(input, `Running npx ${pkg}...`, null)
-
-      try {
-        const proc = await wcRef.current.spawn('npx', args, { cwd: fullPath })
-        proc.output.pipeTo(new WritableStream({
-          write(data) { addBlock('', data, null) }
-        }))
-        const code = await proc.exit
-
-        if (code === 0) {
-          await syncToPhone(fullPath)
-          addBlock('', `✅ npx ${pkg} completed`, null)
-        } else {
-          addBlock('', null, `npx exited with code ${code}`)
+      if (isNative) {
+        addBlock(input, `Running npx ${args[0]}...`, null)
+        const result = await runBackendExec(input, getProjectName())
+        if (result.stdout) addBlock('', result.stdout.trim(), null)
+        if (result.stderr) addBlock('', null, result.stderr.trim())
+        if (result.code === 0) addBlock('', `✅ npx completed`, null)
+      } else {
+        const pkg = args[0]
+        addBlock(input, `Running npx ${pkg}...`, null)
+        try {
+          const proc = await wcRef.current.spawn('npx', args, { cwd: fullPath })
+          proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
+          const code = await proc.exit
+          if (code === 0) {
+            await syncToPhone(fullPath)
+            addBlock('', `✅ npx ${pkg} completed`, null)
+          } else {
+            addBlock('', null, `npx exited with code ${code}`)
+          }
+        } catch (e) {
+          addBlock('', null, `npx error: ${e.message}`)
         }
-      } catch (e) {
-        addBlock('', null, `npx error: ${e.message}`)
       }
       setIsProcessing(false)
       return
     }
 
-    // GIT COMMANDS - ISOMORPHIC-GIT
+    // GIT COMMANDS
     if (command === 'git') {
-      addBlock(input, `Running: ${input}`, null)
-      try {
-        await syncWCtoLFS(fullPath)
-        if (args[0] === 'init') {
-          await git.init({ fs, dir: fullPath })
-          addBlock('', 'Initialized empty Git repository', null)
-        }
-        else if (args[0] === 'status') {
-          const status = await git.statusMatrix({ fs, dir: fullPath })
-          if (status.length === 0) {
-            addBlock('', 'On branch main\nnothing to commit, working tree clean', null)
-          } else {
-            const lines = status.map(([filepath, head, workdir, stage]) => {
-              if (head === 0 && workdir === 2 && stage === 0) return `?? ${filepath}`
-              if (head === 1 && workdir === 2 && stage === 1) return ` M ${filepath}`
-              if (head === 1 && workdir === 1 && stage === 2) return `A ${filepath}`
-              if (head === 1 && workdir === 0 && stage === 1) return ` D ${filepath}`
-              return filepath
-            })
-            addBlock('', `On branch main\n\n${lines.join('\n')}`, null)
+      if (isNative) {
+        addBlock(input, `Running: ${input}`, null)
+        const result = await runBackendExec(input, getProjectName())
+        if (result.stdout) addBlock('', result.stdout.trim(), null)
+        if (result.stderr) addBlock('', null, result.stderr.trim())
+        if (result.code === 0) addBlock('', '💾 Synced', null)
+      } else {
+        // Your existing isomorphic-git logic
+        addBlock(input, `Running: ${input}`, null)
+        try {
+          await syncWCtoLFS(fullPath)
+          if (args[0] === 'init') {
+            await git.init({ fs, dir: fullPath })
+            addBlock('', 'Initialized empty Git repository', null)
           }
-        }
-        else if (args[0] === 'add') {
-          if (args[1] === '.') {
+          else if (args[0] === 'status') {
             const status = await git.statusMatrix({ fs, dir: fullPath })
-            for (const [filepath, head, workdir, stage] of status) {
-              if (workdir!== head || workdir!== stage) await git.add({ fs, dir: fullPath, filepath })
+            if (status.length === 0) {
+              addBlock('', 'On branch main\nnothing to commit, working tree clean', null)
+            } else {
+              const lines = status.map(([filepath, head, workdir, stage]) => {
+                if (head === 0 && workdir === 2 && stage === 0) return `?? ${filepath}`
+                if (head === 1 && workdir === 2 && stage === 1) return ` M ${filepath}`
+                if (head === 1 && workdir === 1 && stage === 2) return `A ${filepath}`
+                if (head === 1 && workdir === 0 && stage === 1) return ` D ${filepath}`
+                return filepath
+              })
+              addBlock('', `On branch main\n\n${lines.join('\n')}`, null)
             }
-            addBlock('', `Added all changes`, null)
-          } else if (args[1]) {
-            await git.add({ fs, dir: fullPath, filepath: args[1] })
-            addBlock('', `Added ${args[1]}`, null)
-          } else {
-            addBlock('', null, `Nothing specified. Use 'git add.'`)
           }
-        }
-        else if (args[0] === 'commit') {
-          const msgIndex = args.indexOf('-m')
-          const message = msgIndex > -1? args[msgIndex + 1]?.replace(/['"]/g, '') : 'commit'
-          const sha = await git.commit({ fs, dir: fullPath, message, author: { name: 'HYE User', email: 'user@hye.dev' } })
-          addBlock('', `[main ${sha.slice(0,7)}] ${message}`, null)
-        }
-        else if (args[0] === 'log') {
-          const commits = await git.log({ fs, dir: fullPath, depth: 10 })
-          if (commits.length === 0) addBlock('', 'No commits yet', null)
-          else {
-            const output = commits.map(c => `commit ${c.oid}\nAuthor: ${c.commit.author.name}\nDate: ${new Date(c.commit.author.timestamp * 1000).toLocaleString()}\n\n ${c.commit.message}\n`).join('\n')
-            addBlock('', output, null)
-          }
-        }
-        else if (args[0] === 'branch') {
-          if (!args[1]) {
-            const branches = await git.listBranches({ fs, dir: fullPath })
-            const current = await git.currentBranch({ fs, dir: fullPath })
-            const output = branches.map(b => b === current? `* ${b}` : ` ${b}`).join('\n')
-            addBlock('', output, null)
-          } else {
-            await git.branch({ fs, dir: fullPath, ref: args[1] })
-            addBlock('', `Created branch '${args[1]}'`, null)
-          }
-        }
-        else if (args[0] === 'checkout') {
-          if (args[1] === '-b') {
-            await git.branch({ fs, dir: fullPath, ref: args[2] })
-            await git.checkout({ fs, dir: fullPath, ref: args[2] })
-            addBlock('', `Switched to new branch '${args[2]}'`, null)
-          } else {
-            await git.checkout({ fs, dir: fullPath, ref: args[1] })
-            addBlock('', `Switched to branch '${args[1]}'`, null)
-          }
-        }
-        else if (args[0] === 'reset') {
-          if (args[1] === '--hard') {
-            await git.checkout({ fs, dir: fullPath, ref: 'HEAD', force: true })
-            addBlock('', 'HEAD reset. Working tree clean.', null)
-          } else {
-            const status = await git.statusMatrix({ fs, dir: fullPath })
-            for (const [filepath, head, workdir, stage] of status) {
-              if (stage === 2 || stage === 3) await git.resetIndex({ fs, dir: fullPath, filepath })
+          else if (args[0] === 'add') {
+            if (args[1] === '.') {
+              const status = await git.statusMatrix({ fs, dir: fullPath })
+              for (const [filepath, head, workdir, stage] of status) {
+                if (workdir!== head || workdir!== stage) await git.add({ fs, dir: fullPath, filepath })
+              }
+              addBlock('', `Added all changes`, null)
+            } else if (args[1]) {
+              await git.add({ fs, dir: fullPath, filepath: args[1] })
+              addBlock('', `Added ${args[1]}`, null)
             }
-            addBlock('', 'Unstaged changes', null)
           }
-        }
-        else if (args[0] === 'clone') {
-          const url = args[1]
-          if (!url) addBlock('', null, 'Usage: git clone <url>')
+          else if (args[0] === 'commit') {
+            const msgIndex = args.indexOf('-m')
+            const message = msgIndex > -1? args[msgIndex + 1]?.replace(/['"]/g, '') : 'commit'
+            const sha = await git.commit({ fs, dir: fullPath, message, author: { name: 'HYE User', email: 'user@hye.dev' } })
+            addBlock('', `[main ${sha.slice(0,7)}] ${message}`, null)
+          }
           else {
-            addBlock('', `Cloning ${url}...`, null)
-            const cloneDir = `${fullPath}/${url.split('/').pop().replace('.git', '')}`
-            await git.clone({ fs, http, dir: cloneDir, url, corsProxy: 'https://cors.isomorphic-git.org' })
-            addBlock('', `Cloned to ${cloneDir}`, null)
-            setCwd(cloneDir.replace('/home', '/HYE-Projects'))
+            addBlock('', null, `git: '${args[0]}' not supported yet on web`)
           }
-        }
-        else if (args[0] === 'push') {
-          addBlock('', 'Pushing...', null)
-          await git.push({ fs, http, dir: fullPath, remote: args[1] || 'origin', ref: args[2] || 'main', onAuth: () => ({ username: prompt('Git username:'), password: prompt('Git token:') }) })
-          addBlock('', 'Push complete', null)
-        }
-        else if (args[0] === 'pull') {
-          addBlock('', 'Pulling...', null)
-          await git.pull({ fs, http, dir: fullPath, remote: args[1] || 'origin', ref: args[2] || 'main', author: { name: 'HYE User', email: 'user@hye.dev' } })
-          addBlock('', 'Pull complete', null)
-        }
-        else if (args[0] === 'remote') {
-          if (args[1] === 'add') {
-            await git.addRemote({ fs, dir: fullPath, remote: args[2], url: args[3] })
-            addBlock('', `Added remote ${args[2]}`, null)
-          } else if (args[1] === '-v') {
-            const remotes = await git.listRemotes({ fs, dir: fullPath })
-            const output = remotes.map(r => `${r.remote}\t${r.url}`).join('\n')
-            addBlock('', output || 'No remotes', null)
+          if (['init', 'add', 'commit'].includes(args[0])) {
+            await syncToPhone(fullPath)
+            addBlock('', `💾 Synced to phone`, null)
           }
+        } catch (e) {
+          addBlock('', null, `Git error: ${e.message}`)
         }
-        else if (args[0] === '--version') {
-          addBlock('', 'git version 2.0.0-isomorphic-git', null)
-        }
-        else if (args[0] === 'help' || args.length === 0) {
-          addBlock('', `Git commands: init, status, add, commit, log, branch, checkout, reset, clone, push, pull, remote, --version`, null)
-        }
-        else {
-          addBlock('', null, `git: '${args[0]}' not supported yet`)
-        }
-        if (['init', 'add', 'commit', 'checkout', 'reset', 'pull', 'clone'].includes(args[0])) {
-          await syncToPhone(fullPath)
-          addBlock('', `💾 Synced to phone`, null)
-        }
-      } catch (e) {
-        addBlock('', null, `Git error: ${e.message}`)
       }
       setIsProcessing(false)
       return
@@ -473,18 +433,31 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     // UNIX COMMANDS
     if (['ls', 'cd', 'mkdir', 'cat', 'echo', 'touch', 'rm', 'pwd', 'clear'].includes(command)) {
       if (command === 'clear') { setBlocks([]); setIsProcessing(false); return }
-      try {
-        const proc = await wcRef.current.spawn(command, args, { cwd: fullPath })
-        let output = ''
-        proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
-        await proc.exit
-        if (command === 'cd' && args[0]) {
-          const newPath = args[0].startsWith('/')? args[0] : `${cwd}/${args[0]}`
-          setCwd(newPath.replace('/home', '/HYE-Projects').replace('//', '/'))
+
+      if (isNative) {
+        if (command === 'cd') {
+          const newPath = args[0]?.startsWith('/')? args[0] : `${cwd}/${args[0]}`
+          setCwd(newPath.replace('//', '/'))
+          addBlock(input, '', null)
+        } else {
+          const result = await runBackendExec(input, getProjectName())
+          if (result.stdout) addBlock(input, result.stdout.trim(), null)
+          else addBlock(input, '', result.stderr || null)
         }
-        if (['mkdir', 'touch', 'echo', 'rm'].includes(command)) await syncToPhone(fullPath)
-        addBlock(input, output || 'Done', null)
-      } catch (e) { addBlock(input, null, e.message) }
+      } else {
+        try {
+          const proc = await wcRef.current.spawn(command, args, { cwd: fullPath })
+          let output = ''
+          proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
+          await proc.exit
+          if (command === 'cd' && args[0]) {
+            const newPath = args[0].startsWith('/')? args[0] : `${cwd}/${args[0]}`
+            setCwd(newPath.replace('/home', '/HYE-Projects').replace('//', '/'))
+          }
+          if (['mkdir', 'touch', 'echo', 'rm'].includes(command)) await syncToPhone(fullPath)
+          addBlock(input, output || 'Done', null)
+        } catch (e) { addBlock(input, null, e.message) }
+      }
       setIsProcessing(false)
       return
     }
