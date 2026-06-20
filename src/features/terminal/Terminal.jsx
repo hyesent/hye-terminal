@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { WebContainer } from '@webcontainer/api'
 import { Filesystem, Directory } from '@capacitor/filesystem'
+import { FilePicker } from '@capawesome/capacitor-file-picker'
 import git from 'isomorphic-git'
 import http from 'isomorphic-git/http/web'
 import FS from '@isomorphic-git/lightning-fs'
@@ -27,6 +28,32 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const wcRef = useRef(null)
   const hasBooted = useRef(false)
 
+  // Detect if we should use backend
+  const shouldUseBackend = () => {
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    const hasWebContainer = typeof SharedArrayBuffer!== 'undefined'
+    return isMobile ||!hasWebContainer
+  }
+
+  // Prewarm Render backend
+  const prewarmBackend = async () => {
+    try {
+      addBlock('system', 'Waking up backend...', null)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 5000)
+
+      await fetch(`${HYE_API}/`, {
+        method: 'GET',
+        signal: controller.signal
+      }).catch(() => {}) // Ignore errors, just wake it up
+
+      clearTimeout(timeout)
+      addBlock('', '✅ Backend ready', null)
+    } catch (e) {
+      addBlock('', '⚠️ Backend may be slow. First command might take 30s.', null)
+    }
+  }
+
   // Backend exec for Android
   const runBackendExec = async (cmd, projectName = '') => {
     try {
@@ -41,7 +68,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       })
       return await res.json()
     } catch (e) {
-      return { stdout: '', stderr: `Network error: ${e.message}`, code: 1 }
+      return { stdout: '', stderr: `Backend error: ${e.message}. Is Render deployed?`, code: 1 }
     }
   }
 
@@ -50,25 +77,61 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     return cwd.split('/').pop()
   }
 
+  // File picker for hye import + Open button
+  const handleOpenPicker = async () => {
+    if (!shouldUseBackend()) {
+      addBlock('hye import', null, 'File picker only works on mobile')
+      return
+    }
+
+    try {
+      addBlock('hye import', 'Opening file picker...', null)
+      const result = await FilePicker.pickDirectory()
+
+      if (result.path) {
+        const projectName = result.path.split('/').pop()
+        addBlock('', `Selected: ${result.path}`, null)
+        addBlock('', `Importing to /HYE-Projects/${projectName}/...`, null)
+
+        await Filesystem.copy({
+          from: result.path,
+          to: `HYE-Projects/${projectName}`,
+          directory: Directory.ExternalStorage,
+          recursive: true
+        })
+
+        addBlock('', `✅ Imported /HYE-Projects/${projectName}/`, null)
+        addBlock('', `💡 Run 'npm install' to install dependencies`, null)
+        setCwd(`/HYE-Projects/${projectName}`)
+      }
+    } catch (e) {
+      if (e.message.includes('canceled')) {
+        addBlock('', 'Picker canceled', null)
+      } else {
+        addBlock('', null, `Picker error: ${e.message}`)
+      }
+    }
+  }
+
   useEffect(() => {
     if (hasBooted.current) return
     hasBooted.current = true
 
     const boot = async () => {
-      const isCapacitor =!!(window.Capacitor?.isNativePlatform)
+      if (shouldUseBackend()) {
+        setNotification({ type: 'booting', text: '🟡 Waking backend...' })
 
-      if (isCapacitor) {
-        setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
-        setTimeout(() => setNotification(null), 2000)
-        setHint('💡 Type "npm --version" to test')
-        setTimeout(() => setHint(null), 5000)
+        // Prewarm backend in background
+        prewarmBackend()
 
         try {
-          const perm = await Filesystem.checkPermissions()
-          if (perm.publicStorage!== 'granted') await Filesystem.requestPermissions()
           await Filesystem.mkdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage, recursive: true })
         } catch (e) { console.log('FS setup:', e) }
 
+        setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
+        setTimeout(() => setNotification(null), 3000)
+        setHint('💡 Type "npm --version" to test')
+        setTimeout(() => setHint(null), 8000)
         setWcBooted(true)
         return
       }
@@ -111,7 +174,8 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       const newIndex = historyIndex - 1
       setHistoryIndex(newIndex)
       setCurrentInput(history[history.length - 1 - newIndex])
-    }
+    },
+    openFilePicker: handleOpenPicker
   }))
 
   const addBlock = (command, output, error = null) => {
@@ -127,7 +191,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   }
 
   const syncToPhone = async (projectPath) => {
-    if (!window.Capacitor?.isNativePlatform()) return
+    if (!shouldUseBackend()) return
     try {
       const files = await wcRef.current.fs.readdir(projectPath, { withFileTypes: true })
       for (const file of files) {
@@ -181,7 +245,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     const [command,...args] = input.trim().split(/\s+/)
     const fullPath = cwd === '/HYE-Projects'? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
-    const isCapacitor =!!(window.Capacitor?.isNativePlatform)
+    const useBackend = shouldUseBackend()
 
     // HYE CREATE
     if (command === 'hye' && args[0] === 'create') {
@@ -195,7 +259,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }
       addBlock(input, `📦 Creating ${template} project... ${TEMPLATES[template]}`, null)
 
-      if (isCapacitor) {
+      if (useBackend) {
         try {
           await Filesystem.mkdir({ path: `HYE-Projects/${projectName}`, directory: Directory.ExternalStorage, recursive: true })
           await Filesystem.writeFile({
@@ -207,6 +271,16 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           await Filesystem.writeFile({
             path: `HYE-Projects/${projectName}/src/App.jsx`,
             data: `export default () => <h1>${template}</h1>`,
+            directory: Directory.ExternalStorage
+          })
+          await Filesystem.writeFile({
+            path: `HYE-Projects/${projectName}/index.html`,
+            data: `<!DOCTYPE html><html><head><title>${projectName}</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`,
+            directory: Directory.ExternalStorage
+          })
+          await Filesystem.writeFile({
+            path: `HYE-Projects/${projectName}/src/main.jsx`,
+            data: `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App.jsx'\n\nReactDOM.createRoot(document.getElementById('root')).render(<App />)`,
             directory: Directory.ExternalStorage
           })
           addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
@@ -237,9 +311,16 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
+    // HYE IMPORT - File picker
+    if (command === 'hye' && args[0] === 'import') {
+      await handleOpenPicker()
+      setIsProcessing(false)
+      return
+    }
+
     // OPEN
     if (command === 'open') {
-      if (isCapacitor) {
+      if (useBackend) {
         try {
           const result = await Filesystem.readdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage })
           addBlock(input, 'Projects:', null)
@@ -262,7 +343,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     // NPM COMMANDS
     if (command === 'npm') {
-      if (isCapacitor) {
+      if (useBackend) {
         addBlock(input, `Running: ${input}`, null)
         const result = await runBackendExec(input, getProjectName())
         if (result.stdout) addBlock('', result.stdout.trim(), null)
@@ -338,7 +419,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         return
       }
 
-      if (isCapacitor) {
+      if (useBackend) {
         addBlock(input, `Running npx ${args[0]}...`, null)
         const result = await runBackendExec(input, getProjectName())
         if (result.stdout) addBlock('', result.stdout.trim(), null)
@@ -367,7 +448,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     // GIT COMMANDS
     if (command === 'git') {
-      if (isCapacitor) {
+      if (useBackend) {
         addBlock(input, `Running: ${input}`, null)
         const result = await runBackendExec(input, getProjectName())
         if (result.stdout) addBlock('', result.stdout.trim(), null)
@@ -433,7 +514,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     if (['ls', 'cd', 'mkdir', 'cat', 'echo', 'touch', 'rm', 'pwd', 'clear'].includes(command)) {
       if (command === 'clear') { setBlocks([]); setIsProcessing(false); return }
 
-      if (isCapacitor) {
+      if (useBackend) {
         if (command === 'cd') {
           const newPath = args[0]?.startsWith('/')? args[0] : `${cwd}/${args[0]}`
           setCwd(newPath.replace('//', '/'))
@@ -464,6 +545,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     if (command === 'help') {
       addBlock(input, `HYE Terminal Commands:`, null)
       addBlock('', `hye create <react|vue|vanilla> [name] - Create project`, null)
+      addBlock('', `hye import - Import folder from phone`, null)
       addBlock('', `npm install <pkg> / uninstall <pkg> / init / list / run <script>`, null)
       addBlock('', `npx <package> - Run package binaries`, null)
       addBlock('', `git init/add/commit/status/log/branch/checkout/reset/clone/push/pull`, null)
