@@ -31,8 +31,8 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   // Detect if we should use backend
   const shouldUseBackend = () => {
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-    const hasWebContainer = typeof SharedArrayBuffer!== 'undefined'
-    return isMobile ||!hasWebContainer
+    const hasWebContainer = typeof SharedArrayBuffer !== 'undefined'
+    return isMobile || !hasWebContainer
   }
 
   // Prewarm Render backend
@@ -77,35 +77,105 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     return cwd.split('/').pop()
   }
 
-  // File picker for hye import + Open button
-  const handleOpenPicker = async () => {
-    if (!shouldUseBackend()) {
-      addBlock('hye import', null, 'File picker only works on mobile')
-      return
-    }
-
-    try {
-      addBlock('hye import', 'Opening file picker...', null)
-      const result = await FilePicker.pickDirectory()
-
-      if (result.path) {
-        const projectName = result.path.split('/').pop()
-        addBlock('', `Selected: ${result.path}`, null)
-        addBlock('', `Importing to /HYE-Projects/${projectName}/...`, null)
-
-        await Filesystem.copy({
-          from: result.path,
-          to: `HYE-Projects/${projectName}`,
-          directory: Directory.ExternalStorage,
-          recursive: true
-        })
-
-        addBlock('', `✅ Imported /HYE-Projects/${projectName}/`, null)
-        addBlock('', `💡 Run 'npm install' to install dependencies`, null)
-        setCwd(`/HYE-Projects/${projectName}`)
+  // ============ WEB DIRECTORY PICKER (FALLBACK) ============
+  const useWebDirectoryPicker = () => {
+    return new Promise((resolve, reject) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.webkitdirectory = true
+      input.multiple = true
+      input.accept = '*/*'
+      
+      input.onchange = async (e) => {
+        const files = e.target.files
+        if (!files || files.length === 0) {
+          reject(new Error('No files selected'))
+          return
+        }
+        
+        const folderName = files[0].webkitRelativePath.split('/')[0]
+        addBlock('', `📁 Importing ${folderName} (${files.length} files)...`, null)
+        
+        let successCount = 0
+        let failCount = 0
+        
+        // Save files using Capacitor Filesystem
+        for (const file of files) {
+          try {
+            const content = await file.text()
+            const relativePath = file.webkitRelativePath.replace(`${folderName}/`, '')
+            
+            if (window.Capacitor) {
+              await Filesystem.writeFile({
+                path: `HYE-Projects/${folderName}/${relativePath}`,
+                data: content,
+                directory: Directory.ExternalStorage,
+                recursive: true
+              })
+              successCount++
+            } else {
+              // Browser fallback - store in memory
+              if (!window._importedFiles) window._importedFiles = {}
+              window._importedFiles[`${folderName}/${relativePath}`] = content
+              successCount++
+            }
+          } catch (err) {
+            failCount++
+            console.log('Failed to save:', file.name, err)
+          }
+        }
+        
+        addBlock('', `✅ Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
+        addBlock('', `💾 Location: /HYE-Projects/${folderName}/`, null)
+        
+        if (!window.Capacitor) {
+          addBlock('', `⚠️ Running in browser - files in memory only`, null)
+        }
+        
+        resolve(folderName)
       }
+      
+      input.oncancel = () => reject(new Error('canceled'))
+      input.click()
+    })
+  }
+
+  // ============ FILE PICKER ============
+  const handleOpenPicker = async () => {
+    addBlock('hye import', '📂 Opening folder picker...', null)
+    
+    try {
+      // Try Capacitor FilePicker first
+      if (window.Capacitor) {
+        try {
+          // Try to import FilePicker dynamically
+          const { FilePicker } = await import('@capawesome/capacitor-file-picker')
+          const result = await FilePicker.pickDirectory()
+          
+          if (result && result.path) {
+            const projectName = result.path.split('/').pop()
+            addBlock('', `Selected: ${result.path}`, null)
+            
+            // Read and copy files
+            await copyDirectoryToApp(result.path, projectName)
+            return
+          }
+        } catch (e) {
+          console.log('Capacitor picker failed, falling back to web picker', e)
+          addBlock('', '⚠️ Using web picker instead', null)
+        }
+      }
+      
+      // FALLBACK: Web directory picker (works in Chrome/Edge)
+      const result = await useWebDirectoryPicker()
+      
+      if (result) {
+        addBlock('', `✅ Imported to /HYE-Projects/${result}/`, null)
+        setCwd(`/HYE-Projects/${result}`)
+      }
+      
     } catch (e) {
-      if (e.message.includes('canceled')) {
+      if (e.message === 'canceled') {
         addBlock('', 'Picker canceled', null)
       } else {
         addBlock('', null, `Picker error: ${e.message}`)
@@ -113,6 +183,42 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     }
   }
 
+  // ============ COPY DIRECTORY HELPER ============
+  const copyDirectoryToApp = async (sourcePath, projectName) => {
+    try {
+      const entries = await Filesystem.readdir({
+        path: sourcePath,
+        directory: Directory.ExternalStorage
+      })
+      
+      let count = 0
+      for (const entry of entries.files) {
+        if (entry.type === 'directory') {
+          await copyDirectoryToApp(`${sourcePath}/${entry.name}`, `${projectName}/${entry.name}`)
+        } else {
+          const content = await Filesystem.readFile({
+            path: `${sourcePath}/${entry.name}`,
+            directory: Directory.ExternalStorage
+          })
+          
+          await Filesystem.writeFile({
+            path: `HYE-Projects/${projectName}/${entry.name}`,
+            data: typeof content.data === 'string' ? content.data : content.data,
+            directory: Directory.ExternalStorage,
+            recursive: true
+          })
+          count++
+        }
+      }
+      
+      addBlock('', `✅ Imported ${count} files`, null)
+      setCwd(`/HYE-Projects/${projectName}`)
+    } catch (e) {
+      throw new Error(`Copy failed: ${e.message}`)
+    }
+  }
+
+  // ============ BOOT ============
   useEffect(() => {
     if (hasBooted.current) return
     hasBooted.current = true
@@ -153,19 +259,22 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     boot()
   }, [])
 
+  // ============ SCROLL ============
   const scrollToBottom = () => {
     terminalRef.current?.scrollTo({ top: terminalRef.current.scrollHeight, behavior: 'smooth' })
   }
   useEffect(scrollToBottom, [blocks])
 
+  // ============ EXPOSE METHODS TO PARENT ============
   useImperativeHandle(ref, () => ({
     runCommand: (cmd) => handleCommand(cmd),
     runEsc: () => { setCurrentInput(''); setHistoryIndex(-1); promptInputRef.current?.focus() },
-    runCtrlL: () => setBlocks([]),
+    runTab: () => { /* tab completion placeholder */ },
     runCtrlC: () => { addBlock(currentInput, null, '^C'); setCurrentInput(''); setHistoryIndex(-1) },
+    runCtrlL: () => setBlocks([]),
     runArrowUp: () => {
       if (history.length === 0) return
-      const newIndex = historyIndex < history.length - 1? historyIndex + 1 : historyIndex
+      const newIndex = historyIndex < history.length - 1 ? historyIndex + 1 : historyIndex
       setHistoryIndex(newIndex)
       setCurrentInput(history[history.length - 1 - newIndex])
     },
@@ -175,13 +284,21 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       setHistoryIndex(newIndex)
       setCurrentInput(history[history.length - 1 - newIndex])
     },
-    openFilePicker: handleOpenPicker
+    runCtrlA: () => { /* go to start placeholder */ },
+    runCtrlE: () => { /* go to end placeholder */ },
+    runCtrlU: () => { /* clear line placeholder */ },
+    runCtrlK: () => { /* clear after cursor placeholder */ },
+    runCtrlW: () => { /* delete word placeholder */ },
+    runCtrlR: () => { /* reverse search placeholder */ },
+    openFilePicker: handleOpenPicker // EXPOSED for Header
   }))
 
+  // ============ ADD BLOCK ============
   const addBlock = (command, output, error = null) => {
     setBlocks(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, cwd, command, output, error }])
   }
 
+  // ============ GET PACKAGE SIZE ============
   const getPackageSize = async (pkg) => {
     try {
       const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`)
@@ -190,6 +307,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     } catch { return 0 }
   }
 
+  // ============ SYNC FUNCTIONS ============
   const syncToPhone = async (projectPath) => {
     if (!shouldUseBackend()) return
     try {
@@ -234,8 +352,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     } catch {}
   }
 
+  // ============ HANDLE COMMAND ============
   const handleCommand = async (input) => {
-    if (!input.trim() ||!wcBooted) return
+    if (!input.trim() || !wcBooted) return
     setHint(null)
     setIsProcessing(true)
     setCurrentInput('')
@@ -243,11 +362,11 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     setHistory(newHistory)
     setHistoryIndex(-1)
 
-    const [command,...args] = input.trim().split(/\s+/)
-    const fullPath = cwd === '/HYE-Projects'? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
+    const [command, ...args] = input.trim().split(/\s+/)
+    const fullPath = cwd === '/HYE-Projects' ? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
     const useBackend = shouldUseBackend()
 
-    // HYE CREATE
+    // ============ HYE CREATE ============
     if (command === 'hye' && args[0] === 'create') {
       const template = args[1]
       const projectName = args[2] || `my-${template}-app`
@@ -311,14 +430,14 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // HYE IMPORT - File picker
+    // ============ HYE IMPORT ============
     if (command === 'hye' && args[0] === 'import') {
       await handleOpenPicker()
       setIsProcessing(false)
       return
     }
 
-    // OPEN
+    // ============ OPEN ============
     if (command === 'open') {
       if (useBackend) {
         try {
@@ -341,7 +460,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // NPM COMMANDS
+    // ============ NPM COMMANDS ============
     if (command === 'npm') {
       if (useBackend) {
         addBlock(input, `Running: ${input}`, null)
@@ -370,7 +489,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             }
           } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
         }
-        else if (args[0] === 'install' &&!args[1]) {
+        else if (args[0] === 'install' && !args[1]) {
           addBlock(input, `Installing from package.json...`, null)
           try {
             const proc = await wcRef.current.spawn('npm', ['install'], { cwd: fullPath })
@@ -411,7 +530,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // NPX COMMANDS
+    // ============ NPX COMMANDS ============
     if (command === 'npx') {
       if (!args[0]) {
         addBlock(input, null, 'Usage: npx <package>');
@@ -446,7 +565,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // GIT COMMANDS
+    // ============ GIT COMMANDS ============
     if (command === 'git') {
       if (useBackend) {
         addBlock(input, `Running: ${input}`, null)
@@ -481,7 +600,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             if (args[1] === '.') {
               const status = await git.statusMatrix({ fs, dir: fullPath })
               for (const [filepath, head, workdir, stage] of status) {
-                if (workdir!== head || workdir!== stage) await git.add({ fs, dir: fullPath, filepath })
+                if (workdir !== head || workdir !== stage) await git.add({ fs, dir: fullPath, filepath })
               }
               addBlock('', `Added all changes`, null)
             } else if (args[1]) {
@@ -491,7 +610,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
           else if (args[0] === 'commit') {
             const msgIndex = args.indexOf('-m')
-            const message = msgIndex > -1? args[msgIndex + 1]?.replace(/['"]/g, '') : 'commit'
+            const message = msgIndex > -1 ? args[msgIndex + 1]?.replace(/['"]/g, '') : 'commit'
             const sha = await git.commit({ fs, dir: fullPath, message, author: { name: 'HYE User', email: 'user@hye.dev' } })
             addBlock('', `[main ${sha.slice(0,7)}] ${message}`, null)
           }
@@ -510,13 +629,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // UNIX COMMANDS
+    // ============ UNIX COMMANDS ============
     if (['ls', 'cd', 'mkdir', 'cat', 'echo', 'touch', 'rm', 'pwd', 'clear'].includes(command)) {
       if (command === 'clear') { setBlocks([]); setIsProcessing(false); return }
 
       if (useBackend) {
         if (command === 'cd') {
-          const newPath = args[0]?.startsWith('/')? args[0] : `${cwd}/${args[0]}`
+          const newPath = args[0]?.startsWith('/') ? args[0] : `${cwd}/${args[0]}`
           setCwd(newPath.replace('//', '/'))
           addBlock(input, '', null)
         } else {
@@ -531,7 +650,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           proc.output.pipeTo(new WritableStream({ write(data) { output += data } }))
           await proc.exit
           if (command === 'cd' && args[0]) {
-            const newPath = args[0].startsWith('/')? args[0] : `${cwd}/${args[0]}`
+            const newPath = args[0].startsWith('/') ? args[0] : `${cwd}/${args[0]}`
             setCwd(newPath.replace('/home', '/HYE-Projects').replace('//', '/'))
           }
           if (['mkdir', 'touch', 'echo', 'rm'].includes(command)) await syncToPhone(fullPath)
@@ -542,6 +661,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
+    // ============ HELP ============
     if (command === 'help') {
       addBlock(input, `HYE Terminal Commands:`, null)
       addBlock('', `hye create <react|vue|vanilla> [name] - Create project`, null)
@@ -554,10 +674,11 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
+    // ============ UNKNOWN COMMAND ============
     addBlock(input, null, `Command not found: ${command}. Type 'help'`)
     setIsProcessing(false)
-  }
-
+    }
+    // ============ RENDER ============
   return (
     <div className="terminal" ref={terminalRef} data-theme={theme}>
       {notification && <div className={`terminal-notification ${notification.type}`}>{notification.text}</div>}
@@ -574,7 +695,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         history={history}
         historyIndex={historyIndex}
         setHistoryIndex={setHistoryIndex}
-        disabled={isProcessing ||!wcBooted}
+        disabled={isProcessing || !wcBooted}
         theme={theme}
         value={currentInput}
         onChange={setCurrentInput}
