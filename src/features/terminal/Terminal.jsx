@@ -55,13 +55,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }).catch(() => {})
 
       clearTimeout(timeout)
-      addBlock('', ' Backend ready', null)
+      addBlock('', '✅ Backend ready', null)
     } catch (e) {
       addBlock('', '⚠️ Backend may be slow. First command might take 30s.', null)
     }
   }
 
-  // Backend exec for Android (kept for backward compatibility, but will be replaced)
+  // Backend exec (kept for backward compatibility, but we use direct fetch now)
   const runBackendExec = async (cmd, projectName = '') => {
     try {
       const res = await fetch(`${HYE_API}/exec`, {
@@ -130,7 +130,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
         }
         
-        addBlock('', ` Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
+        addBlock('', `✅ Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
         addBlock('', `📁 Location: /HYE-Projects/${folderName}/`, null)
         
         if (!isCapacitorAvailable()) {
@@ -154,7 +154,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         try {
           const result = await useWebDirectoryPicker()
           if (result) {
-            addBlock('', ` Imported to /HYE-Projects/${result}/`, null)
+            addBlock('', `✅ Imported to /HYE-Projects/${result}/`, null)
             setCwd(`/HYE-Projects/${result}`)
             return
           }
@@ -166,7 +166,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       
       const result = await useWebDirectoryPicker()
       if (result) {
-        addBlock('', ` Imported to /HYE-Projects/${result}/`, null)
+        addBlock('', `✅ Imported to /HYE-Projects/${result}/`, null)
         setCwd(`/HYE-Projects/${result}`)
       }
     } catch (e) {
@@ -309,7 +309,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     } catch {}
   }
 
-  // ============ CAPACITOR-BASED LS ============
+  // ============ CAPACITOR-BASED LS (fallback) ============
   const capacitorLs = async (path) => {
     try {
       const result = await Filesystem.readdir({
@@ -322,11 +322,71 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     }
   }
 
-  // ============ SYNC TO BACKEND ============
+  // ============ READ ALL FILES FROM WEBCONTAINER ============
+  const readAllFilesFromWebContainer = async (basePath, relativePath = '') => {
+    const result = {}
+    try {
+      const entries = await wcRef.current.fs.readdir(basePath, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = `${basePath}/${entry.name}`
+        const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name
+        if (entry.isDirectory()) {
+          const sub = await readAllFilesFromWebContainer(fullPath, relPath)
+          Object.assign(result, sub)
+        } else {
+          const content = await wcRef.current.fs.readFile(fullPath, 'utf-8')
+          result[relPath] = content
+        }
+      }
+    } catch (e) {
+      console.log('Error reading WebContainer:', e)
+    }
+    return result
+  }
+
+  // ============ READ ALL FILES FROM CAPACITOR (fallback) ============
+  const readAllFilesFromCapacitor = async (basePath) => {
+    const result = {}
+    try {
+      const entries = await Filesystem.readdir({
+        path: basePath,
+        directory: Directory.ExternalStorage
+      })
+      for (const entry of entries.files) {
+        if (entry.type === 'directory') {
+          const sub = await readAllFilesFromCapacitor(`${basePath}/${entry.name}`)
+          Object.assign(result, sub)
+        } else {
+          const content = await Filesystem.readFile({
+            path: `${basePath}/${entry.name}`,
+            directory: Directory.ExternalStorage
+          })
+          result[`${basePath}/${entry.name}`] = typeof content.data === 'string' ? content.data : content.data
+        }
+      }
+    } catch (e) {
+      console.log('Error reading Capacitor:', e)
+    }
+    return result
+  }
+
+  // ============ SYNC TO BACKEND (READ FROM WEBCONTAINER) ============
   const syncProjectToBackend = async (projectName) => {
     addBlock('', '📤 Syncing files to backend...', null)
     try {
-      const files = await readAllFilesFromCapacitor(`HYE-Projects/${projectName}`)
+      // PRIMARY: Read from WebContainer (reliable)
+      let files = {}
+      if (wcRef.current) {
+        files = await readAllFilesFromWebContainer(`/home/${projectName}`)
+      }
+      // FALLBACK: if no WebContainer, read from Capacitor
+      if (Object.keys(files).length === 0 && isCapacitorAvailable()) {
+        files = await readAllFilesFromCapacitor(`HYE-Projects/${projectName}`)
+      }
+      if (Object.keys(files).length === 0) {
+        addBlock('', null, 'No files found to sync')
+        return false
+      }
       const res = await fetch(`${HYE_API}/sync-project`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -339,27 +399,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       addBlock('', null, `Sync error: ${e.message}`)
       return false
     }
-  }
-
-  const readAllFilesFromCapacitor = async (basePath) => {
-    const result = {}
-    const entries = await Filesystem.readdir({
-      path: basePath,
-      directory: Directory.ExternalStorage
-    })
-    for (const entry of entries.files) {
-      if (entry.type === 'directory') {
-        const sub = await readAllFilesFromCapacitor(`${basePath}/${entry.name}`)
-        Object.assign(result, sub)
-      } else {
-        const content = await Filesystem.readFile({
-          path: `${basePath}/${entry.name}`,
-          directory: Directory.ExternalStorage
-        })
-        result[`${basePath}/${entry.name}`] = typeof content.data === 'string' ? content.data : content.data
-      }
-    }
-    return result
   }
 
   // ============ HANDLE COMMAND ============
@@ -567,7 +606,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     }
 
     // ============ PATH ============
-if (command === 'path') {
+    if (command === 'path') {
       try {
         const relativePath = cwd.replace('/HYE-Projects', '')
         const uriResult = await Filesystem.getUri({
@@ -609,25 +648,38 @@ if (command === 'path') {
       return
     }
 
-    // ============ LS ============
+    // ============ LS (SHOWS BACKEND FILES) ============
     if (command === 'ls') {
-      if (useBackend && isCapacitorAvailable()) {
+      if (useBackend) {
+        const projectName = getProjectName()
         try {
-          const relativePath = cwd.replace('/HYE-Projects', '')
-          const files = await capacitorLs(relativePath)
-          if (files && files.length > 0) {
-            const names = files.map(f => f.name).join('  ')
-            addBlock(input, `📁 ${names}`, null)
+          const res = await fetch(`${HYE_API}/exec`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              cmd: 'ls -la',
+              projectName: projectName,
+              cwd: ''
+            })
+          })
+          const result = await res.json()
+          if (result.stdout) {
+            const lines = result.stdout.split('\n').filter(line => line.trim() !== '' && !line.startsWith('total'))
+            const files = lines.map(line => {
+              const parts = line.trim().split(/\s+/)
+              return parts[parts.length - 1]
+            }).filter(Boolean)
+            if (files.length > 0) {
+              addBlock(input, `📁 ${files.join('  ')}`, null)
+            } else {
+              addBlock(input, '📁 (empty directory)', null)
+            }
           } else {
             addBlock(input, '📁 (empty directory)', null)
           }
         } catch (e) {
           addBlock(input, null, `Error: ${e.message}`)
         }
-      } else if (useBackend) {
-        const result = await runBackendExec(input, getProjectName())
-        if (result.stdout) addBlock(input, result.stdout.trim(), null)
-        else addBlock(input, '', result.stderr || null)
       } else {
         try {
           const proc = await wcRef.current.spawn('ls', args, { cwd: fullPath })
@@ -641,7 +693,7 @@ if (command === 'path') {
       return
     }
 
-    // ============ NPM COMMANDS (fixed) ============
+    // ============ NPM COMMANDS ============
     if (command === 'npm') {
       if (useBackend) {
         const projectName = getProjectName()
@@ -667,7 +719,7 @@ if (command === 'path') {
           addBlock('', null, `Exec error: ${e.message}`)
         }
       } else {
-        // WebContainer npm commands
+        // WebContainer npm commands (existing logic)
         if (args[0] === 'install' && args[1]) {
           const pkg = args[1]?.replace(/@.*/, '')
           const sizeMB = await getPackageSize(pkg)
@@ -727,8 +779,8 @@ if (command === 'path') {
       }
       setIsProcessing(false)
       return
-          }
-        // ============ NPX COMMANDS (fixed) ============
+            }
+        // ============ NPX COMMANDS ============
     if (command === 'npx') {
       if (!args[0]) {
         addBlock(input, null, 'Usage: npx <package>');
@@ -778,7 +830,7 @@ if (command === 'path') {
       return
     }
 
-    // ============ GIT COMMANDS (fixed) ============
+    // ============ GIT COMMANDS ============
     if (command === 'git') {
       if (useBackend) {
         const projectName = getProjectName()
@@ -865,7 +917,6 @@ if (command === 'path') {
         if (command === 'pwd') {
           addBlock(input, cwd, null)
         } else {
-          // Use direct fetch for other commands with proper projectName
           const projectName = getProjectName()
           try {
             const res = await fetch(`${HYE_API}/exec`, {
@@ -897,7 +948,8 @@ if (command === 'path') {
       setIsProcessing(false)
       return
     }
-        // ============ HELP ============
+
+    // ============ HELP ============
     if (command === 'help') {
       addBlock(input, `HYE Terminal Commands:`, null)
       addBlock('', `hye create <react|vue|vanilla> [name] - Create project`, null)
