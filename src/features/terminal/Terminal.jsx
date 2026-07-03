@@ -868,6 +868,7 @@ if (command === 'help') {
 // ============ UNKNOWN ============
 addBlock(input, null, `Command not found: ${command}. Type 'help'`)
 setIsProcessing(false)
+  }
       // ============ RENDER ============
   return (
     <div className="terminal" ref={terminalRef} data-theme={theme}>
