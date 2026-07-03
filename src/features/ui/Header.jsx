@@ -1,21 +1,24 @@
 import { useEffect, useState, useRef } from 'react'
 import Menu from './Menu.jsx'
 import HelpModal from './HelpModal'
-import { Palette, ChevronDown, Plus, FolderOpen } from 'lucide-react'
+import { Palette, ChevronDown, Plus, FolderOpen, FolderInput } from 'lucide-react'
 
 function Header({ 
   theme, 
   toggleTheme,
   onCommand,
   onEsc, onTab, onCtrlC, onCtrlL, onArrowUp, onArrowDown,
-  onCtrlA, onCtrlE, onCtrlU, onCtrlK, onCtrlW, onCtrlR
+  onCtrlA, onCtrlE, onCtrlU, onCtrlK, onCtrlW, onCtrlR,
+  onImportFolder // NEW prop for folder picker
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [shortcutOpen, setShortcutOpen] = useState(false)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const [openMenuOpen, setOpenMenuOpen] = useState(false) // NEW
   const dropdownRef = useRef(null)
   const newRef = useRef(null)
+  const openRef = useRef(null) // NEW
 
   const templates = ['react', 'vue', 'vanilla']
 
@@ -26,6 +29,9 @@ function Header({
       }
       if (newRef.current && !newRef.current.contains(e.target)) {
         setNewMenuOpen(false)
+      }
+      if (openRef.current && !openRef.current.contains(e.target)) {
+        setOpenMenuOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -45,8 +51,18 @@ function Header({
     }
   }
 
-  const handleOpen = () => {
-    onCommand('open')
+  const handleOpenProjects = () => {
+    setOpenMenuOpen(false)
+    onCommand('open') // Lists projects
+  }
+
+  const handleImportFolder = () => {
+    setOpenMenuOpen(false)
+    if (onImportFolder) {
+      onImportFolder() // Triggers file picker
+    } else {
+      onCommand('hye import') // Fallback
+    }
   }
 
   return (
@@ -81,10 +97,26 @@ function Header({
             )}
           </div>
 
-          {/* OPEN BUTTON */}
-          <button className="header-btn" onClick={handleOpen}>
-            <FolderOpen size={14} /> Open
-          </button>
+          {/* OPEN DROPDOWN - Now with Import option */}
+          <div className="dropdown-wrapper" ref={openRef}>
+            <button 
+              className="header-btn"
+              onClick={() => setOpenMenuOpen(!openMenuOpen)}
+            >
+              <FolderOpen size={14} /> Open <ChevronDown size={12} />
+            </button>
+            
+            {openMenuOpen && (
+              <div className="dropdown-menu">
+                <button className="dropdown-item" onClick={handleOpenProjects}>
+                  <FolderOpen size={14} /> List Projects
+                </button>
+                <button className="dropdown-item" onClick={handleImportFolder}>
+                  <FolderInput size={14} /> Import from Phone
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* SHORTCUT DROPDOWN */}
           <div className="dropdown-wrapper" ref={dropdownRef}>
