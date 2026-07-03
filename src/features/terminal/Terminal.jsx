@@ -372,109 +372,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }
     } catch {}
   }
-  // ============ MANUAL ZIP EXTRACTOR (No Libraries) ============
-async function extractZipManually(zipBytes) {
-  const files = {}
-  let offset = 0
-  
-  // Find all local file headers
-  while (offset < zipBytes.length) {
-    // Look for ZIP local file header signature (0x04034b50)
-    if (zipBytes[offset] !== 0x50 || zipBytes[offset+1] !== 0x4B || 
-        zipBytes[offset+2] !== 0x03 || zipBytes[offset+3] !== 0x04) {
-      offset++
-      continue
-    }
-    
-    // Parse header (simplified - works for basic ZIPs)
-    const versionNeeded = zipBytes[offset+4] | (zipBytes[offset+5] << 8)
-    const flags = zipBytes[offset+6] | (zipBytes[offset+7] << 8)
-    const compression = zipBytes[offset+8] | (zipBytes[offset+9] << 8)
-    const lastModTime = zipBytes[offset+10] | (zipBytes[offset+11] << 8)
-    const lastModDate = zipBytes[offset+12] | (zipBytes[offset+13] << 8)
-    const crc32 = zipBytes[offset+14] | (zipBytes[offset+15] << 8) | 
-                  (zipBytes[offset+16] << 16) | (zipBytes[offset+17] << 24)
-    const compressedSize = zipBytes[offset+18] | (zipBytes[offset+19] << 8) | 
-                           (zipBytes[offset+20] << 16) | (zipBytes[offset+21] << 24)
-    const uncompressedSize = zipBytes[offset+22] | (zipBytes[offset+23] << 8) | 
-                             (zipBytes[offset+24] << 16) | (zipBytes[offset+25] << 24)
-    const fileNameLength = zipBytes[offset+26] | (zipBytes[offset+27] << 8)
-    const extraFieldLength = zipBytes[offset+28] | (zipBytes[offset+29] << 8)
-    
-    // Read file name
-    let fileName = ''
-    for (let i = 0; i < fileNameLength; i++) {
-      fileName += String.fromCharCode(zipBytes[offset + 30 + i])
-    }
-    
-    // Skip to data
-    const dataStart = offset + 30 + fileNameLength + extraFieldLength
-    const dataEnd = dataStart + compressedSize
-    
-    // Extract file content
-    if (compressedSize > 0 && !fileName.endsWith('/')) {
-      try {
-        let content
-        
-        if (compression === 0) {
-          // Stored (no compression)
-          content = ''
-          for (let i = dataStart; i < dataEnd; i++) {
-            content += String.fromCharCode(zipBytes[i])
-          }
-        } else if (compression === 8) {
-          // Deflated (ZIP compression) - use DecompressionStream API
-          try {
-            const compressedData = zipBytes.slice(dataStart, dataEnd)
-            const ds = new DecompressionStream('deflate-raw')
-            const writer = ds.writable.getWriter()
-            writer.write(compressedData)
-            writer.close()
+
             
-            const reader = ds.readable.getReader()
-            const chunks = []
-            let totalLength = 0
             
-            while (true) {
-              const { value, done } = await reader.read()
-              if (done) break
-              chunks.push(value)
-              totalLength += value.length
-            }
-            
-            const result = new Uint8Array(totalLength)
-            let position = 0
-            for (const chunk of chunks) {
-              result.set(chunk, position)
-              position += chunk.length
-            }
-            
-            content = new TextDecoder().decode(result)
-          } catch (e) {
-            // Fallback: try to read as string
-            content = ''
-            for (let i = dataStart; i < dataEnd; i++) {
-              content += String.fromCharCode(zipBytes[i])
-            }
-          }
-        } else {
-          // Unsupported compression
-          content = `[Unsupported compression: ${compression}]`
-        }
-        
-        files[fileName] = content
-      } catch (e) {
-        console.log('Extract error for', fileName, e)
-        files[fileName] = `[Extract error: ${e.message}]`
-      }
-    }
-    
-    // Move to next file
-    offset = dataEnd
-  }
-  
-  return files
-  }
 
   // ============ HANDLE COMMAND ============
   const handleCommand = async (input) => {
@@ -491,7 +391,7 @@ async function extractZipManually(zipBytes) {
     const useBackend = shouldUseBackend()
 
       
-// ============ HYE CREATE (FIXED) ============
+// ============ HYE CREATE (UPDATED - JSON FROM BACKEND) ============
 if (command === 'hye' && args[0] === 'create') {
   const template = args[1]
   const projectName = args[2] || `my-${template}-app`
@@ -509,20 +409,17 @@ if (command === 'hye' && args[0] === 'create') {
     addBlock('', `⚠️ Project name sanitized to: ${safeName}`, null)
   }
 
-  // Check if project already exists (in Capacitor FS)
+  // Check if project already exists
   let exists = false
   if (isCapacitorAvailable()) {
     try {
-      const result = await Filesystem.readdir({
+      await Filesystem.readdir({
         path: `HYE-Projects/${safeName}`,
         directory: Directory.ExternalStorage
       })
       exists = true
-    } catch (e) {
-      // Directory doesn't exist
-    }
+    } catch (e) { /* Directory doesn't exist */ }
   }
-  // Also check WebContainer
   if (wcRef.current) {
     try {
       await wcRef.current.fs.stat(`/home/${safeName}`)
@@ -532,7 +429,6 @@ if (command === 'hye' && args[0] === 'create') {
 
   if (exists) {
     addBlock('', `⚠️ Project "${safeName}" already exists. Removing old version...`, null)
-    // Delete existing project from Capacitor
     if (isCapacitorAvailable()) {
       try {
         await Filesystem.rmdir({
@@ -540,21 +436,20 @@ if (command === 'hye' && args[0] === 'create') {
           directory: Directory.ExternalStorage,
           recursive: true
         })
-      } catch (e) { /* ignore */ }
+      } catch (e) {}
     }
-    // Delete from WebContainer
     if (wcRef.current) {
       try {
-        await wcRef.current.fs.rm(`/home/${safeName}`, { recursive: true })
-      } catch (e) { /* ignore */ }
+        await wcRef.current.fs.rm(`/home/${safeName}`, { recursive: true, force: true })
+      } catch (e) {}
     }
-    addBlock('', ` Old project removed.`, null)
+    addBlock('', `🗑️ Old project removed.`, null)
   }
 
-  addBlock(input, ` Creating ${template} project...`, null)
+  addBlock(input, `📦 Creating ${template} project...`, null)
 
   try {
-    // ===== CALL BACKEND =====
+    // ===== CALL BACKEND (NEW JSON ENDPOINT) =====
     const response = await fetch(`${HYE_API}/hye-create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -564,7 +459,6 @@ if (command === 'hye' && args[0] === 'create') {
       })
     })
 
-    // Handle HTTP errors
     if (!response.ok) {
       let errorMsg = `HTTP ${response.status}`
       try {
@@ -578,81 +472,65 @@ if (command === 'hye' && args[0] === 'create') {
 
     const result = await response.json()
 
-    // Check success flag
     if (!result.success) {
       addBlock('', null, `Backend error: ${result.detail || 'Unknown error'}`)
       setIsProcessing(false)
       return
     }
 
-    // Validate base64 data
-    if (!result.data || typeof result.data !== 'string' || result.data.length === 0) {
-      addBlock('', null, `Backend returned empty data.`)
+    // ===== GET FILES FROM JSON RESPONSE (NO ZIP!) =====
+    const files = result.files
+    if (!files || typeof files !== 'object' || Object.keys(files).length === 0) {
+      addBlock('', null, `No files received from backend.`)
       setIsProcessing(false)
       return
     }
 
-    addBlock('', ` Downloading template...`, null)
+    addBlock('', `📥 Received ${Object.keys(files).length} files...`, null)
 
-    // ===== DECODE ZIP =====
-    const zipBase64 = result.data
-    let bytes
-    try {
-      const binaryString = atob(zipBase64)
-      bytes = new Uint8Array(binaryString.length)
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-      }
-    } catch (e) {
-      addBlock('', null, `Invalid base64 data. Please try again.`)
-      console.error('Base64 decode error:', e)
-      setIsProcessing(false)
-      return
-    }
-
-    // ===== EXTRACT ZIP =====
-    const files = await extractZipManually(bytes)
-
-    // ===== SAVE FILES =====
+    // ===== SAVE FILES DIRECTLY (NO EXTRACTION NEEDED) =====
     let savedCount = 0
 
     for (const [filePath, content] of Object.entries(files)) {
-      if (filePath.endsWith('/')) continue
-      // Remove projectName prefix if present
-      let cleanPath = filePath
-      if (filePath.startsWith(`${safeName}/`)) {
-        cleanPath = filePath.substring(safeName.length + 1)
-      }
-
+      if (!content && content !== '') continue // Skip empty files
+      
       try {
-        // Save to Capacitor
+        // Create directories in WebContainer
+        if (wcRef.current) {
+          const dirPath = filePath.split('/').slice(0, -1).join('/')
+          if (dirPath) {
+            await wcRef.current.fs.mkdir(`/home/${safeName}/${dirPath}`, { recursive: true })
+          }
+          await wcRef.current.fs.writeFile(`/home/${safeName}/${filePath}`, content)
+        }
+        
+        // Save to Capacitor Filesystem (Android)
         if (isCapacitorAvailable()) {
+          const dirPath = filePath.split('/').slice(0, -1).join('/')
+          if (dirPath) {
+            await Filesystem.mkdir({
+              path: `HYE-Projects/${safeName}/${dirPath}`,
+              directory: Directory.ExternalStorage,
+              recursive: true
+            })
+          }
           await Filesystem.writeFile({
-            path: `HYE-Projects/${safeName}/${cleanPath}`,
+            path: `HYE-Projects/${safeName}/${filePath}`,
             data: content,
             directory: Directory.ExternalStorage,
             recursive: true
           })
         }
-
-        // Save to WebContainer
-        if (wcRef.current) {
-          const dirPath = cleanPath.split('/').slice(0, -1).join('/')
-          if (dirPath) {
-            await wcRef.current.fs.mkdir(`/home/${safeName}/${dirPath}`, { recursive: true })
-          }
-          await wcRef.current.fs.writeFile(`/home/${safeName}/${cleanPath}`, content)
-        }
         savedCount++
       } catch (err) {
-        console.log('Failed to save:', cleanPath, err)
+        console.log('Failed to save:', filePath, err)
       }
     }
 
-    addBlock('', ` Extracted ${savedCount} files`, null)
-    addBlock('', ` /HYE-Projects/${safeName}/`, null)
-    addBlock('', ` Saved to your phone storage!`, null)
-    addBlock('', ` Next: cd ${safeName} && npm install`, null)
+    addBlock('', `✅ Created ${savedCount} files`, null)
+    addBlock('', `📁 /HYE-Projects/${safeName}/`, null)
+    addBlock('', `💾 Saved to your phone storage!`, null)
+    addBlock('', `📝 Next: cd ${safeName} && npm install`, null)
 
     setCwd(`/HYE-Projects/${safeName}`)
 
@@ -663,7 +541,9 @@ if (command === 'hye' && args[0] === 'create') {
 
   setIsProcessing(false)
   return
-  }
+    }
+
+
     // ============ HYE IMPORT ============
     if (command === 'hye' && args[0] === 'import') {
       await handleOpenPicker()
