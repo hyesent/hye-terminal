@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Required to create/update releases
 
     steps:
       - name: Checkout code
@@ -46,16 +48,18 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Rename APK
+      - name: Rename APK to HyeTerminal.apk
         run: mv android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/HyeTerminal.apk
 
       - name: Upload APK to Latest Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: latest                # fixed tag – always overwritten
+          tag_name: latest
           name: "Latest Build"
-          prerelease: true                # optional – marks as pre‑release
+          prerelease: true
           draft: false
           files: android/app/build/outputs/apk/debug/HyeTerminal.apk
+          allowUpdates: true       # ✅ Allows overwriting the release asset
+          replacesArtifacts: true  # ✅ Replaces existing asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
