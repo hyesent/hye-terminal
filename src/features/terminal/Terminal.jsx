@@ -576,20 +576,25 @@ if (command === 'hye' && args[0] === 'create') {
 // ============ PATH COMMAND ============
 if (command === 'path') {
   try {
-    // Get the real Android path for the current cwd
     const relativePath = cwd.replace('/HYE-Projects', '')
-    const uri = await Filesystem.getUri({
+    const uriResult = await Filesystem.getUri({
       path: relativePath || '',
       directory: Directory.ExternalStorage
     });
-    addBlock(input, `📂 Actual Android path: ${uri}`, null);
-    addBlock('', `💡 You can open this folder in a file manager that supports scoped storage.`, null);
+    // Capacitor returns an object with a 'uri' property
+    const uriString = uriResult.uri || uriResult.toString();
+    addBlock(input, `📂 Content URI: ${uriString}`, null);
+    // Construct filesystem path (common location)
+    const fsPath = `/storage/emulated/0/HYE-Projects${relativePath ? '/' + relativePath : ''}`;
+    addBlock('', `📁 Likely filesystem path: ${fsPath}`, null);
+    addBlock('', `💡 Use a file manager that can open content URIs.`, null);
   } catch (e) {
     addBlock(input, null, `Error: ${e.message}`);
   }
   setIsProcessing(false);
   return;
-            }
+           }
+
     // ============ NPM COMMANDS ============
     if (command === 'npm') {
       if (useBackend) {
