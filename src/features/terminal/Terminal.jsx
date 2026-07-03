@@ -654,7 +654,7 @@ if (command === 'npm') {
       await syncProjectToBackend(projectName)
     }
     addBlock(input, `Running: ${input}`, null)
-    const result = await runBackendExec(input, getProjectName())
+    const result = await runBackendExec(input, '')
     if (result.stdout) addBlock('', result.stdout.trim(), null)
     if (result.stderr) addBlock('', null, result.stderr.trim())
     if (result.code === 0) addBlock('', '✅ Done', null)
