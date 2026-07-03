@@ -372,6 +372,109 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }
     } catch {}
   }
+  // ============ MANUAL ZIP EXTRACTOR (No Libraries) ============
+function extractZipManually(zipBytes) {
+  const files = {}
+  let offset = 0
+  
+  // Find all local file headers
+  while (offset < zipBytes.length) {
+    // Look for ZIP local file header signature (0x04034b50)
+    if (zipBytes[offset] !== 0x50 || zipBytes[offset+1] !== 0x4B || 
+        zipBytes[offset+2] !== 0x03 || zipBytes[offset+3] !== 0x04) {
+      offset++
+      continue
+    }
+    
+    // Parse header (simplified - works for basic ZIPs)
+    const versionNeeded = zipBytes[offset+4] | (zipBytes[offset+5] << 8)
+    const flags = zipBytes[offset+6] | (zipBytes[offset+7] << 8)
+    const compression = zipBytes[offset+8] | (zipBytes[offset+9] << 8)
+    const lastModTime = zipBytes[offset+10] | (zipBytes[offset+11] << 8)
+    const lastModDate = zipBytes[offset+12] | (zipBytes[offset+13] << 8)
+    const crc32 = zipBytes[offset+14] | (zipBytes[offset+15] << 8) | 
+                  (zipBytes[offset+16] << 16) | (zipBytes[offset+17] << 24)
+    const compressedSize = zipBytes[offset+18] | (zipBytes[offset+19] << 8) | 
+                           (zipBytes[offset+20] << 16) | (zipBytes[offset+21] << 24)
+    const uncompressedSize = zipBytes[offset+22] | (zipBytes[offset+23] << 8) | 
+                             (zipBytes[offset+24] << 16) | (zipBytes[offset+25] << 24)
+    const fileNameLength = zipBytes[offset+26] | (zipBytes[offset+27] << 8)
+    const extraFieldLength = zipBytes[offset+28] | (zipBytes[offset+29] << 8)
+    
+    // Read file name
+    let fileName = ''
+    for (let i = 0; i < fileNameLength; i++) {
+      fileName += String.fromCharCode(zipBytes[offset + 30 + i])
+    }
+    
+    // Skip to data
+    const dataStart = offset + 30 + fileNameLength + extraFieldLength
+    const dataEnd = dataStart + compressedSize
+    
+    // Extract file content
+    if (compressedSize > 0 && !fileName.endsWith('/')) {
+      try {
+        let content
+        
+        if (compression === 0) {
+          // Stored (no compression)
+          content = ''
+          for (let i = dataStart; i < dataEnd; i++) {
+            content += String.fromCharCode(zipBytes[i])
+          }
+        } else if (compression === 8) {
+          // Deflated (ZIP compression) - use DecompressionStream API
+          try {
+            const compressedData = zipBytes.slice(dataStart, dataEnd)
+            const ds = new DecompressionStream('deflate-raw')
+            const writer = ds.writable.getWriter()
+            writer.write(compressedData)
+            writer.close()
+            
+            const reader = ds.readable.getReader()
+            const chunks = []
+            let totalLength = 0
+            
+            while (true) {
+              const { value, done } = await reader.read()
+              if (done) break
+              chunks.push(value)
+              totalLength += value.length
+            }
+            
+            const result = new Uint8Array(totalLength)
+            let position = 0
+            for (const chunk of chunks) {
+              result.set(chunk, position)
+              position += chunk.length
+            }
+            
+            content = new TextDecoder().decode(result)
+          } catch (e) {
+            // Fallback: try to read as string
+            content = ''
+            for (let i = dataStart; i < dataEnd; i++) {
+              content += String.fromCharCode(zipBytes[i])
+            }
+          }
+        } else {
+          // Unsupported compression
+          content = `[Unsupported compression: ${compression}]`
+        }
+        
+        files[fileName] = content
+      } catch (e) {
+        console.log('Extract error for', fileName, e)
+        files[fileName] = `[Extract error: ${e.message}]`
+      }
+    }
+    
+    // Move to next file
+    offset = dataEnd
+  }
+  
+  return files
+  }
 
   // ============ HANDLE COMMAND ============
   const handleCommand = async (input) => {
@@ -387,69 +490,105 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     const fullPath = cwd === '/HYE-Projects' ? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
     const useBackend = shouldUseBackend()
 
-    // ============ HYE CREATE ============
-    if (command === 'hye' && args[0] === 'create') {
-      const template = args[1]
-      const projectName = args[2] || `my-${template}-app`
-      const TEMPLATES = { 'react': '2MB', 'vue': '1.8MB', 'vanilla': '800KB', 'express': '1MB', 'nextjs': '8MB' }
-      if (!TEMPLATES[template]) {
-        addBlock(input, null, `Template not found. Available: react, vue, vanilla, express, nextjs`)
-        setIsProcessing(false)
-        return
-      }
-      addBlock(input, `📦 Creating ${template} project... ${TEMPLATES[template]}`, null)
+    // ============ HYE CREATE (NO NPM NEEDED) ============
+if (command === 'hye' && args[0] === 'create') {
+  const template = args[1]
+  const projectName = args[2] || `my-${template}-app`
+  const TEMPLATES = { 'react': '2KB', 'vue': '2KB', 'vanilla': '1KB', 'express': '1KB' }
+  
+  if (!TEMPLATES[template]) {
+    addBlock(input, null, `Template not found. Available: react, vue, vanilla, express`)
+    setIsProcessing(false)
+    return
+  }
+  
+  addBlock(input, `📦 Creating ${template} project...`, null)
 
-      if (useBackend) {
-        try {
-          await Filesystem.mkdir({ path: `HYE-Projects/${projectName}`, directory: Directory.ExternalStorage, recursive: true })
-          await Filesystem.writeFile({
-            path: `HYE-Projects/${projectName}/package.json`,
-            data: JSON.stringify({ name: projectName, version: '1.0.0', scripts: { dev: 'vite', build: 'vite build' } }, null, 2),
-            directory: Directory.ExternalStorage
-          })
-          await Filesystem.mkdir({ path: `HYE-Projects/${projectName}/src`, directory: Directory.ExternalStorage, recursive: true })
-          await Filesystem.writeFile({
-            path: `HYE-Projects/${projectName}/src/App.jsx`,
-            data: `export default () => <h1>${template}</h1>`,
-            directory: Directory.ExternalStorage
-          })
-          await Filesystem.writeFile({
-            path: `HYE-Projects/${projectName}/index.html`,
-            data: `<!DOCTYPE html><html><head><title>${projectName}</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`,
-            directory: Directory.ExternalStorage
-          })
-          await Filesystem.writeFile({
-            path: `HYE-Projects/${projectName}/src/main.jsx`,
-            data: `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App.jsx'\n\nReactDOM.createRoot(document.getElementById('root')).render(<App />)`,
-            directory: Directory.ExternalStorage
-          })
-          addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
-          addBlock('', `💾 Saved to YOUR phone storage`, null)
-          setCwd(`/HYE-Projects/${projectName}`)
-        } catch (e) {
-          addBlock('', null, `Error: ${e.message}`)
-        }
-      } else {
-        try {
-          await wcRef.current.fs.mkdir(`/home/${projectName}`, { recursive: true })
-          await wcRef.current.fs.writeFile(`/home/${projectName}/package.json`, JSON.stringify({
-            name: projectName, version: '1.0.0', scripts: { dev: 'vite', build: 'vite build' }
-          }, null, 2))
-          await wcRef.current.fs.mkdir(`/home/${projectName}/src`, { recursive: true })
-          await wcRef.current.fs.writeFile(`/home/${projectName}/src/App.jsx`, `export default () => <h1>${template}</h1>`)
-          await wcRef.current.fs.writeFile(`/home/${projectName}/index.html`, `<!DOCTYPE html><html><head><title>${projectName}</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`)
-          await wcRef.current.fs.writeFile(`/home/${projectName}/src/main.jsx`, `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App.jsx'\n\nReactDOM.createRoot(document.getElementById('root')).render(<App />)`)
-          await syncToPhone(`/home/${projectName}`)
-          addBlock('', `✅ Created /HYE-Projects/${projectName}/`, null)
-          addBlock('', `💾 Saved to YOUR phone storage`, null)
-          setCwd(`/HYE-Projects/${projectName}`)
-        } catch (e) {
-          addBlock('', null, `Error: ${e.message}`)
-        }
-      }
+  try {
+    // ===== CALL BACKEND =====
+    const response = await fetch(`${HYE_API}/hye-create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: template,
+        name: projectName
+      })
+    })
+    
+    const result = await response.json()
+    
+    if (!result.success) {
+      addBlock('', null, `Backend error: ${result.detail || 'Unknown error'}`)
       setIsProcessing(false)
       return
     }
+    
+    addBlock('', `📥 Downloading template...`, null)
+    
+    // ===== DECODE ZIP WITHOUT JSZIP =====
+    const zipBase64 = result.data
+    const binaryString = atob(zipBase64)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
+    
+    // ===== MANUAL ZIP EXTRACTION (Pure JS - No Libraries) =====
+    const files = extractZipManually(bytes)
+    
+    // ===== SAVE FILES =====
+    let savedCount = 0
+    
+    for (const [filePath, content] of Object.entries(files)) {
+      // Skip directories
+      if (filePath.endsWith('/')) continue
+      
+      // Remove projectName prefix if present
+      const cleanPath = filePath.replace(`${projectName}/`, '')
+      
+      try {
+        // Save to Capacitor Filesystem (Android)
+        if (isCapacitorAvailable()) {
+          await Filesystem.writeFile({
+            path: `HYE-Projects/${projectName}/${cleanPath}`,
+            data: content,
+            directory: Directory.ExternalStorage,
+            recursive: true
+          })
+          savedCount++
+        }
+        
+        // Save to WebContainer
+        if (wcRef.current) {
+          const dirPath = cleanPath.split('/').slice(0, -1).join('/')
+          if (dirPath) {
+            await wcRef.current.fs.mkdir(`/home/${projectName}/${dirPath}`, { recursive: true })
+          }
+          await wcRef.current.fs.writeFile(`/home/${projectName}/${cleanPath}`, content)
+          savedCount++
+        }
+      } catch (err) {
+        console.log('Failed to save:', cleanPath, err)
+      }
+    }
+    
+    addBlock('', `✅ Extracted ${savedCount} files`, null)
+    addBlock('', `📁 /HYE-Projects/${projectName}/`, null)
+    addBlock('', `💾 Saved to your phone storage!`, null)
+    addBlock('', `📝 Next: cd ${projectName} && npm install`, null)
+    
+    // Set current working directory
+    setCwd(`/HYE-Projects/${projectName}`)
+    
+  } catch (e) {
+    addBlock('', null, `Create error: ${e.message}`)
+    console.error('hye create error:', e)
+  }
+  
+  setIsProcessing(false)
+  return
+}
+      
 
     // ============ HYE IMPORT ============
     if (command === 'hye' && args[0] === 'import') {
