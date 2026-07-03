@@ -490,7 +490,8 @@ async function extractZipManually(zipBytes) {
     const fullPath = cwd === '/HYE-Projects' ? '/home' : `/home${cwd.replace('/HYE-Projects', '')}`
     const useBackend = shouldUseBackend()
 
-    // ============ HYE CREATE (NO NPM NEEDED) ============
+      
+// ============ HYE CREATE (FIXED) ============
 if (command === 'hye' && args[0] === 'create') {
   const template = args[1]
   const projectName = args[2] || `my-${template}-app`
@@ -501,8 +502,56 @@ if (command === 'hye' && args[0] === 'create') {
     setIsProcessing(false)
     return
   }
-  
-  addBlock(input, `📦 Creating ${template} project...`, null)
+
+  // Sanitize project name (no spaces, special chars)
+  const safeName = projectName.replace(/[^a-zA-Z0-9_-]/g, '')
+  if (safeName !== projectName) {
+    addBlock('', `⚠️ Project name sanitized to: ${safeName}`, null)
+  }
+
+  // Check if project already exists (in Capacitor FS)
+  let exists = false
+  if (isCapacitorAvailable()) {
+    try {
+      const result = await Filesystem.readdir({
+        path: `HYE-Projects/${safeName}`,
+        directory: Directory.ExternalStorage
+      })
+      exists = true
+    } catch (e) {
+      // Directory doesn't exist
+    }
+  }
+  // Also check WebContainer
+  if (wcRef.current) {
+    try {
+      await wcRef.current.fs.stat(`/home/${safeName}`)
+      exists = true
+    } catch (e) {}
+  }
+
+  if (exists) {
+    addBlock('', `⚠️ Project "${safeName}" already exists. Removing old version...`, null)
+    // Delete existing project from Capacitor
+    if (isCapacitorAvailable()) {
+      try {
+        await Filesystem.rmdir({
+          path: `HYE-Projects/${safeName}`,
+          directory: Directory.ExternalStorage,
+          recursive: true
+        })
+      } catch (e) { /* ignore */ }
+    }
+    // Delete from WebContainer
+    if (wcRef.current) {
+      try {
+        await wcRef.current.fs.rm(`/home/${safeName}`, { recursive: true })
+      } catch (e) { /* ignore */ }
+    }
+    addBlock('', ` Old project removed.`, null)
+  }
+
+  addBlock(input, ` Creating ${template} project...`, null)
 
   try {
     // ===== CALL BACKEND =====
@@ -511,85 +560,110 @@ if (command === 'hye' && args[0] === 'create') {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         type: template,
-        name: projectName
+        name: safeName
       })
     })
-    
+
+    // Handle HTTP errors
+    if (!response.ok) {
+      let errorMsg = `HTTP ${response.status}`
+      try {
+        const errJson = await response.json()
+        if (errJson.detail) errorMsg = errJson.detail
+      } catch (e) {}
+      addBlock('', null, `Backend error: ${errorMsg}`)
+      setIsProcessing(false)
+      return
+    }
+
     const result = await response.json()
-    
+
+    // Check success flag
     if (!result.success) {
       addBlock('', null, `Backend error: ${result.detail || 'Unknown error'}`)
       setIsProcessing(false)
       return
     }
-    
-    addBlock('', `📥 Downloading template...`, null)
-    
-    // ===== DECODE ZIP WITHOUT JSZIP =====
-    const zipBase64 = result.data
-    const binaryString = atob(zipBase64)
-    const bytes = new Uint8Array(binaryString.length)
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i)
+
+    // Validate base64 data
+    if (!result.data || typeof result.data !== 'string' || result.data.length === 0) {
+      addBlock('', null, `Backend returned empty data.`)
+      setIsProcessing(false)
+      return
     }
-    
-    // ===== MANUAL ZIP EXTRACTION (Pure JS - No Libraries) =====
-    const files = extractZipManually(bytes)
-    
+
+    addBlock('', ` Downloading template...`, null)
+
+    // ===== DECODE ZIP =====
+    const zipBase64 = result.data
+    let bytes
+    try {
+      const binaryString = atob(zipBase64)
+      bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+    } catch (e) {
+      addBlock('', null, `Invalid base64 data. Please try again.`)
+      console.error('Base64 decode error:', e)
+      setIsProcessing(false)
+      return
+    }
+
+    // ===== EXTRACT ZIP =====
+    const files = await extractZipManually(bytes)
+
     // ===== SAVE FILES =====
     let savedCount = 0
-    
+
     for (const [filePath, content] of Object.entries(files)) {
-      // Skip directories
       if (filePath.endsWith('/')) continue
-      
       // Remove projectName prefix if present
-      const cleanPath = filePath.replace(`${projectName}/`, '')
-      
+      let cleanPath = filePath
+      if (filePath.startsWith(`${safeName}/`)) {
+        cleanPath = filePath.substring(safeName.length + 1)
+      }
+
       try {
-        // Save to Capacitor Filesystem (Android)
+        // Save to Capacitor
         if (isCapacitorAvailable()) {
           await Filesystem.writeFile({
-            path: `HYE-Projects/${projectName}/${cleanPath}`,
+            path: `HYE-Projects/${safeName}/${cleanPath}`,
             data: content,
             directory: Directory.ExternalStorage,
             recursive: true
           })
-          savedCount++
         }
-        
+
         // Save to WebContainer
         if (wcRef.current) {
           const dirPath = cleanPath.split('/').slice(0, -1).join('/')
           if (dirPath) {
-            await wcRef.current.fs.mkdir(`/home/${projectName}/${dirPath}`, { recursive: true })
+            await wcRef.current.fs.mkdir(`/home/${safeName}/${dirPath}`, { recursive: true })
           }
-          await wcRef.current.fs.writeFile(`/home/${projectName}/${cleanPath}`, content)
-          savedCount++
+          await wcRef.current.fs.writeFile(`/home/${safeName}/${cleanPath}`, content)
         }
+        savedCount++
       } catch (err) {
         console.log('Failed to save:', cleanPath, err)
       }
     }
-    
-    addBlock('', `✅ Extracted ${savedCount} files`, null)
-    addBlock('', `📁 /HYE-Projects/${projectName}/`, null)
-    addBlock('', `💾 Saved to your phone storage!`, null)
-    addBlock('', `📝 Next: cd ${projectName} && npm install`, null)
-    
-    // Set current working directory
-    setCwd(`/HYE-Projects/${projectName}`)
-    
+
+    addBlock('', ` Extracted ${savedCount} files`, null)
+    addBlock('', ` /HYE-Projects/${safeName}/`, null)
+    addBlock('', ` Saved to your phone storage!`, null)
+    addBlock('', ` Next: cd ${safeName} && npm install`, null)
+
+    setCwd(`/HYE-Projects/${safeName}`)
+
   } catch (e) {
     addBlock('', null, `Create error: ${e.message}`)
     console.error('hye create error:', e)
   }
-  
+
   setIsProcessing(false)
   return
-}
-      
-
+  }
     // ============ HYE IMPORT ============
     if (command === 'hye' && args[0] === 'import') {
       await handleOpenPicker()
