@@ -55,9 +55,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }).catch(() => {}) // Ignore errors, just wake it up
 
       clearTimeout(timeout)
-      addBlock('', '✅ Backend ready', null)
+      addBlock('', ' Backend ready', null)
     } catch (e) {
-      addBlock('', '⚠️ Backend may be slow. First command might take 30s.', null)
+      addBlock('', ' Backend may be slow. First command might take 30s.', null)
     }
   }
 
@@ -101,7 +101,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         }
         
         const folderName = files[0].webkitRelativePath.split('/')[0]
-        addBlock('', `📁 Importing ${folderName} (${files.length} files)...`, null)
+        addBlock('', ` Importing ${folderName} (${files.length} files)...`, null)
         
         let successCount = 0
         let failCount = 0
@@ -132,11 +132,11 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
         }
         
-        addBlock('', `✅ Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
-        addBlock('', `💾 Location: /HYE-Projects/${folderName}/`, null)
+        addBlock('', ` Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
+        addBlock('', ` Location: /HYE-Projects/${folderName}/`, null)
         
         if (!isCapacitorAvailable()) {
-          addBlock('', `⚠️ Running in browser - files in memory only`, null)
+          addBlock('', ` Running in browser - files in memory only`, null)
         }
         
         resolve(folderName)
@@ -166,7 +166,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
   // ============ FILE PICKER ============
   const handleOpenPicker = async () => {
-    addBlock('hye import', '📂 Opening folder picker...', null)
+    addBlock('hye import', ' Opening folder picker...', null)
     
     try {
       // Try Capacitor FilePicker first (only if in Capacitor env)
@@ -183,7 +183,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
         } catch (e) {
           console.log('Capacitor picker failed, falling back to web picker', e)
-          addBlock('', '⚠️ Using web picker instead', null)
+          addBlock('', ' Using web picker instead', null)
         }
       }
       
@@ -191,7 +191,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       const result = await useWebDirectoryPicker()
       
       if (result) {
-        addBlock('', `✅ Imported to /HYE-Projects/${result}/`, null)
+        addBlock('', ` Imported to /HYE-Projects/${result}/`, null)
         setCwd(`/HYE-Projects/${result}`)
       }
       
@@ -232,7 +232,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         }
       }
       
-      addBlock('', `✅ Imported ${count} files`, null)
+      addBlock('', ` Imported ${count} files`, null)
       setCwd(`/HYE-Projects/${projectName}`)
     } catch (e) {
       throw new Error(`Copy failed: ${e.message}`)
