@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import Menu from './Menu.jsx'
 import HelpModal from './HelpModal'
-import { Palette, ChevronDown, Plus, FolderOpen, FolderInput } from 'lucide-react'
+import { Palette, ChevronDown, Plus, FolderOpen, FolderInput, Download } from 'lucide-react'
 
 function Header({ 
   theme, 
@@ -9,16 +9,16 @@ function Header({
   onCommand,
   onEsc, onTab, onCtrlC, onCtrlL, onArrowUp, onArrowDown,
   onCtrlA, onCtrlE, onCtrlU, onCtrlK, onCtrlW, onCtrlR,
-  onImportFolder // NEW prop for folder picker
+  onImportFolder
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [shortcutOpen, setShortcutOpen] = useState(false)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
-  const [openMenuOpen, setOpenMenuOpen] = useState(false) // NEW
+  const [openMenuOpen, setOpenMenuOpen] = useState(false)
   const dropdownRef = useRef(null)
   const newRef = useRef(null)
-  const openRef = useRef(null) // NEW
+  const openRef = useRef(null)
 
   const templates = ['react', 'vue', 'vanilla']
 
@@ -53,15 +53,15 @@ function Header({
 
   const handleOpenProjects = () => {
     setOpenMenuOpen(false)
-    onCommand('open') // Lists projects
+    onCommand('open')
   }
 
   const handleImportFolder = () => {
     setOpenMenuOpen(false)
     if (onImportFolder) {
-      onImportFolder() // Triggers file picker
+      onImportFolder()
     } else {
-      onCommand('hye import') // Fallback
+      onCommand('hye import')
     }
   }
 
@@ -97,7 +97,7 @@ function Header({
             )}
           </div>
 
-          {/* OPEN DROPDOWN - Now with Import option */}
+          {/* OPEN DROPDOWN */}
           <div className="dropdown-wrapper" ref={openRef}>
             <button 
               className="header-btn"
@@ -147,6 +147,18 @@ function Header({
 
           <button className="header-btn" onClick={() => setHelpOpen(true)}>Help</button>
           <button className="header-btn" onClick={() => setMenuOpen(true)}>Menu</button>
+
+          {/* 🔥 DOWNLOAD APK BUTTON */}
+          <a
+            href="https://github.com/hyesent/hye-terminal/releases/download/latest/HyeTerminal.apk"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="header-btn download-btn"
+            title="Download the latest APK for better services and usage"
+          >
+            <Download size={14} /> APK
+          </a>
+
           <button className="header-btn icon-btn" onClick={toggleTheme} title="Switch theme">
             <Palette size={16} />
           </button>
