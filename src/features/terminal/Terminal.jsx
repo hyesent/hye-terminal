@@ -35,6 +35,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     return isMobile || !hasWebContainer
   }
 
+  // Check if Capacitor is available
+  const isCapacitorAvailable = () => {
+    return typeof window !== 'undefined' && 
+           window.Capacitor && 
+           window.Capacitor.isNativePlatform?.()
+  }
+
   // Prewarm Render backend
   const prewarmBackend = async () => {
     try {
@@ -105,7 +112,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             const content = await file.text()
             const relativePath = file.webkitRelativePath.replace(`${folderName}/`, '')
             
-            if (window.Capacitor) {
+            if (isCapacitorAvailable()) {
               await Filesystem.writeFile({
                 path: `HYE-Projects/${folderName}/${relativePath}`,
                 data: content,
@@ -128,7 +135,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         addBlock('', `✅ Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
         addBlock('', `💾 Location: /HYE-Projects/${folderName}/`, null)
         
-        if (!window.Capacitor) {
+        if (!isCapacitorAvailable()) {
           addBlock('', `⚠️ Running in browser - files in memory only`, null)
         }
         
@@ -140,18 +147,32 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     })
   }
 
+  // ============ CAPACITOR FILE PICKER (LAZY LOAD) ============
+  const useCapacitorPicker = async () => {
+    try {
+      // Dynamically import only when needed and in Capacitor environment
+      //const { FilePicker } = await import('@capawesome/capacitor-file-picker') \\
+      const result = await FilePicker.pickDirectory()
+      
+      if (result && result.path) {
+        return result
+      }
+      throw new Error('No path returned')
+    } catch (e) {
+      console.log('Capacitor picker failed:', e)
+      throw e
+    }
+  }
+
   // ============ FILE PICKER ============
   const handleOpenPicker = async () => {
     addBlock('hye import', '📂 Opening folder picker...', null)
     
     try {
-      // Try Capacitor FilePicker first
-      if (window.Capacitor) {
+      // Try Capacitor FilePicker first (only if in Capacitor env)
+      if (isCapacitorAvailable()) {
         try {
-          // Try to import FilePicker dynamically
-          const { FilePicker } = await import('@capawesome/capacitor-file-picker')
-          const result = await FilePicker.pickDirectory()
-          
+          const result = await useCapacitorPicker()
           if (result && result.path) {
             const projectName = result.path.split('/').pop()
             addBlock('', `Selected: ${result.path}`, null)
@@ -673,12 +694,12 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       setIsProcessing(false)
       return
     }
-
-    // ============ UNKNOWN COMMAND ============
+        // ============ UNKNOWN COMMAND ============
     addBlock(input, null, `Command not found: ${command}. Type 'help'`)
     setIsProcessing(false)
-    }
-    // ============ RENDER ============
+  }
+
+  // ============ RENDER ============
   return (
     <div className="terminal" ref={terminalRef} data-theme={theme}>
       {notification && <div className={`terminal-notification ${notification.type}`}>{notification.text}</div>}
