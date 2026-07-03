@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22          # ✅ Changed from 20 to 22
           cache: 'npm'
 
       - name: Setup Java
@@ -43,6 +43,7 @@ jobs:
       - name: Build APK (debug)
         run: |
           cd android
+          chmod +x gradlew
           ./gradlew assembleDebug
 
       - name: Upload APK artifact
