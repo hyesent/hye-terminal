@@ -373,7 +373,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     } catch {}
   }
   // ============ MANUAL ZIP EXTRACTOR (No Libraries) ============
-function extractZipManually(zipBytes) {
+async function extractZipManually(zipBytes) {
   const files = {}
   let offset = 0
   
