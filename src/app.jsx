@@ -1,9 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-
 import Header from './features/ui/Header.jsx'
 import Terminal from './features/terminal/Terminal.jsx'
-
-
 
 function App() {
   const themes = ['black', 'white', 'gogeta', 'classic']
@@ -12,7 +9,7 @@ function App() {
 
   useEffect(() => {
     try {
-      const saved = getTheme()
+      const saved = localStorage.getItem('hye-theme')
       if (saved && themes.includes(saved)) {
         setTheme(saved)
       }
@@ -24,8 +21,18 @@ function App() {
     const nextIndex = (currentIndex + 1) % themes.length
     const newTheme = themes[nextIndex]
     setTheme(newTheme)
-    saveTheme(newTheme)
-    console.log('Theme changed to:', newTheme)
+    localStorage.setItem('hye-theme', newTheme)
+  }
+
+  // NEW: Handle import folder from header
+  const handleImportFolder = () => {
+    // Trigger the file picker in Terminal
+    if (terminalRef.current?.openFilePicker) {
+      terminalRef.current.openFilePicker()
+    } else {
+      // Fallback: send command
+      terminalRef.current?.runCommand('hye import')
+    }
   }
 
   return (
@@ -33,6 +40,8 @@ function App() {
       <Header
         theme={theme}
         toggleTheme={toggleTheme}
+        onCommand={(cmd) => terminalRef.current?.runCommand(cmd)}
+        onImportFolder={handleImportFolder} // NEW prop
         onEsc={() => terminalRef.current?.runEsc()}
         onTab={() => terminalRef.current?.runTab()}
         onCtrlC={() => terminalRef.current?.runCtrlC()}
