@@ -27,6 +27,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const promptInputRef = useRef(null)
   const wcRef = useRef(null)
   const hasBooted = useRef(false)
+  const projectCache = useRef({}) // 🔥 Cached project files
 
   // Detect if we should use backend
   const shouldUseBackend = () => {
@@ -37,8 +38,8 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
   // Check if Capacitor is available
   const isCapacitorAvailable = () => {
-    return typeof window !== 'undefined' && 
-           window.Capacitor && 
+    return typeof window !== 'undefined' &&
+           window.Capacitor &&
            window.Capacitor.isNativePlatform?.()
   }
 
@@ -48,12 +49,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       addBlock('system', 'Waking up backend...', null)
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 5000)
-
-      await fetch(`${HYE_API}/`, {
-        method: 'GET',
-        signal: controller.signal
-      }).catch(() => {})
-
+      await fetch(`${HYE_API}/`, { method: 'GET', signal: controller.signal }).catch(() => {})
       clearTimeout(timeout)
       addBlock('', '✅ Backend ready', null)
     } catch (e) {
@@ -61,7 +57,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     }
   }
 
-  // Backend exec (kept for backward compatibility, but we use direct fetch now)
   const runBackendExec = async (cmd, projectName = '') => {
     try {
       const res = await fetch(`${HYE_API}/exec`, {
@@ -92,25 +87,20 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       input.webkitdirectory = true
       input.multiple = true
       input.accept = '*/*'
-      
+
       input.onchange = async (e) => {
         const files = e.target.files
         if (!files || files.length === 0) {
           reject(new Error('No files selected'))
           return
         }
-        
         const folderName = files[0].webkitRelativePath.split('/')[0]
         addBlock('', `📁 Importing ${folderName} (${files.length} files)...`, null)
-        
-        let successCount = 0
-        let failCount = 0
-        
+        let successCount = 0, failCount = 0
         for (const file of files) {
           try {
             const content = await file.text()
             const relativePath = file.webkitRelativePath.replace(`${folderName}/`, '')
-            
             if (isCapacitorAvailable()) {
               await Filesystem.writeFile({
                 path: `HYE-Projects/${folderName}/${relativePath}`,
@@ -129,26 +119,20 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             console.log('Failed to save:', file.name, err)
           }
         }
-        
         addBlock('', `✅ Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
         addBlock('', `📁 Location: /HYE-Projects/${folderName}/`, null)
-        
         if (!isCapacitorAvailable()) {
           addBlock('', `⚠️ Running in browser - files in memory only`, null)
         }
-        
         resolve(folderName)
       }
-      
       input.oncancel = () => reject(new Error('canceled'))
       input.click()
     })
   }
 
-  // ============ FILE PICKER ============
   const handleOpenPicker = async () => {
     addBlock('hye import', '📂 Opening folder picker...', null)
-    
     try {
       if (isCapacitorAvailable()) {
         try {
@@ -163,7 +147,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           addBlock('', '⚠️ Using web picker instead', null)
         }
       }
-      
       const result = await useWebDirectoryPicker()
       if (result) {
         addBlock('', `✅ Imported to /HYE-Projects/${result}/`, null)
@@ -187,11 +170,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       if (shouldUseBackend()) {
         setNotification({ type: 'booting', text: '🟡 Waking backend...' })
         prewarmBackend()
-
         try {
           await Filesystem.mkdir({ path: 'HYE-Projects', directory: Directory.ExternalStorage, recursive: true })
         } catch (e) { console.log('FS setup:', e) }
-
         setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
         setTimeout(() => setNotification(null), 3000)
         setHint('💡 Type "npm --version" to test')
@@ -203,10 +184,8 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       setNotification({ type: 'booting', text: 'Booting HYE Terminal...' })
       if (!webcontainerInstance) webcontainerInstance = await WebContainer.boot()
       wcRef.current = webcontainerInstance
-
       try { await wcRef.current.fs.readdir('/home') }
       catch { await wcRef.current.fs.mkdir('/home', { recursive: true }) }
-
       setNotification({ type: 'success', text: '🟢 Terminal ready with git + npm + npx' })
       setTimeout(() => setNotification(null), 4000)
       setHint('💡 Type "help" for commands')
@@ -222,7 +201,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   }
   useEffect(scrollToBottom, [blocks])
 
-  // ============ EXPOSE METHODS TO PARENT ============
   useImperativeHandle(ref, () => ({
     runCommand: (cmd) => handleCommand(cmd),
     runEsc: () => { setCurrentInput(''); setHistoryIndex(-1); promptInputRef.current?.focus() },
@@ -250,12 +228,10 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     openFilePicker: handleOpenPicker
   }))
 
-  // ============ ADD BLOCK ============
   const addBlock = (command, output, error = null) => {
     setBlocks(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, cwd, command, output, error }])
   }
 
-  // ============ GET PACKAGE SIZE ============
   const getPackageSize = async (pkg) => {
     try {
       const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`)
@@ -264,7 +240,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     } catch { return 0 }
   }
 
-  // ============ SYNC FUNCTIONS ============
   const syncToPhone = async (projectPath) => {
     if (!shouldUseBackend()) return
     try {
@@ -309,7 +284,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     } catch {}
   }
 
-  // ============ CAPACITOR-BASED LS (fallback) ============
   const capacitorLs = async (path) => {
     try {
       const result = await Filesystem.readdir({
@@ -322,7 +296,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     }
   }
 
-  // ============ READ ALL FILES FROM WEBCONTAINER ============
   const readAllFilesFromWebContainer = async (basePath, relativePath = '') => {
     const result = {}
     try {
@@ -344,7 +317,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     return result
   }
 
-  // ============ READ ALL FILES FROM CAPACITOR (fallback) ============
   const readAllFilesFromCapacitor = async (basePath) => {
     const result = {}
     try {
@@ -370,23 +342,31 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     return result
   }
 
-  // ============ SYNC TO BACKEND (READ FROM WEBCONTAINER) ============
+  // ============ SYNC TO BACKEND (WITH CACHE) ============
   const syncProjectToBackend = async (projectName) => {
     addBlock('', '📤 Syncing files to backend...', null)
     try {
-      // PRIMARY: Read from WebContainer (reliable)
       let files = {}
-      if (wcRef.current) {
+
+      // 1. Try memory cache (set during hye create)
+      if (projectCache.current[projectName]) {
+        files = projectCache.current[projectName]
+        addBlock('', `📦 Using cached files (${Object.keys(files).length} files)`, null)
+      }
+      // 2. Try WebContainer (if available)
+      else if (wcRef.current) {
         files = await readAllFilesFromWebContainer(`/home/${projectName}`)
       }
-      // FALLBACK: if no WebContainer, read from Capacitor
-      if (Object.keys(files).length === 0 && isCapacitorAvailable()) {
+      // 3. Fallback to Capacitor
+      else if (isCapacitorAvailable()) {
         files = await readAllFilesFromCapacitor(`HYE-Projects/${projectName}`)
       }
+
       if (Object.keys(files).length === 0) {
         addBlock('', null, 'No files found to sync')
         return false
       }
+
       const res = await fetch(`${HYE_API}/sync-project`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -420,7 +400,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       const template = args[1]
       const projectName = args[2] || `my-${template}-app`
       const TEMPLATES = { 'react': '2KB', 'vue': '2KB', 'vanilla': '1KB', 'express': '1KB' }
-      
+
       if (!TEMPLATES[template]) {
         addBlock(input, null, `Template not found. Available: react, vue, vanilla, express`)
         setIsProcessing(false)
@@ -467,6 +447,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           } catch (e) {}
         }
         addBlock('', `🗑️ Old project removed.`, null)
+        delete projectCache.current[safeName]
       }
 
       addBlock(input, `📦 Creating ${template} project...`, null)
@@ -508,10 +489,27 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
         addBlock('', `📥 Received ${Object.keys(files).length} files...`, null)
 
+        // ✅ Create project directory on Capacitor BEFORE writing files
+        if (isCapacitorAvailable()) {
+          try {
+            await Filesystem.mkdir({
+              path: `HYE-Projects/${safeName}`,
+              directory: Directory.ExternalStorage,
+              recursive: true
+            })
+          } catch (e) {
+            console.log('Failed to create project dir:', e)
+          }
+        }
+
+        // 💾 Cache the files for sync
+        projectCache.current[safeName] = files
+
         let savedCount = 0
         for (const [filePath, content] of Object.entries(files)) {
           if (!content && content !== '') continue
           try {
+            // Write to WebContainer
             if (wcRef.current) {
               const dirPath = filePath.split('/').slice(0, -1).join('/')
               if (dirPath) {
@@ -519,6 +517,8 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
               }
               await wcRef.current.fs.writeFile(`/home/${safeName}/${filePath}`, content)
             }
+
+            // Write to Capacitor (with explicit directory creation)
             if (isCapacitorAvailable()) {
               const dirPath = filePath.split('/').slice(0, -1).join('/')
               if (dirPath) {
@@ -562,7 +562,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // ============ HYE SYNC ============
+        // ============ HYE SYNC ============
     if (command === 'hye' && args[0] === 'sync') {
       const projectName = getProjectName()
       if (!projectName) {
@@ -648,7 +648,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // ============ LS (SHOWS BACKEND FILES) ============
+    // ============ LS ============
     if (command === 'ls') {
       if (useBackend) {
         const projectName = getProjectName()
@@ -693,7 +693,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // ============ NPM COMMANDS ============
+    // ============ NPM ============
     if (command === 'npm') {
       if (useBackend) {
         const projectName = getProjectName()
@@ -719,7 +719,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           addBlock('', null, `Exec error: ${e.message}`)
         }
       } else {
-        // WebContainer npm commands (existing logic)
+        // WebContainer npm commands
         if (args[0] === 'install' && args[1]) {
           const pkg = args[1]?.replace(/@.*/, '')
           const sizeMB = await getPackageSize(pkg)
@@ -779,15 +779,15 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }
       setIsProcessing(false)
       return
-            }
-        // ============ NPX COMMANDS ============
+    }
+
+    // ============ NPX ============
     if (command === 'npx') {
       if (!args[0]) {
-        addBlock(input, null, 'Usage: npx <package>');
-        setIsProcessing(false);
+        addBlock(input, null, 'Usage: npx <package>')
+        setIsProcessing(false)
         return
       }
-
       if (useBackend) {
         const projectName = getProjectName()
         if (projectName) await syncProjectToBackend(projectName)
@@ -810,6 +810,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           addBlock('', null, `Exec error: ${e.message}`)
         }
       } else {
+        // WebContainer npx
         const pkg = args[0]
         addBlock(input, `Running npx ${pkg}...`, null)
         try {
@@ -830,7 +831,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // ============ GIT COMMANDS ============
+    // ============ GIT ============
     if (command === 'git') {
       if (useBackend) {
         const projectName = getProjectName()
@@ -854,6 +855,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           addBlock('', null, `Exec error: ${e.message}`)
         }
       } else {
+        // WebContainer git (simplified)
         addBlock(input, `Running: ${input}`, null)
         try {
           await syncWCtoLFS(fullPath)
@@ -909,10 +911,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-    // ============ UNIX COMMANDS ============
+    // ============ OTHER UNIX COMMANDS ============
     if (['mkdir', 'cat', 'echo', 'touch', 'rm', 'pwd', 'clear'].includes(command)) {
       if (command === 'clear') { setBlocks([]); setIsProcessing(false); return }
-
       if (useBackend) {
         if (command === 'pwd') {
           addBlock(input, cwd, null)
@@ -967,7 +968,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     // ============ UNKNOWN ============
     addBlock(input, null, `Command not found: ${command}. Type 'help'`)
     setIsProcessing(false)
-  }  // <-- END of handleCommand
+  } // end handleCommand
 
   // ============ RENDER ============
   return (
