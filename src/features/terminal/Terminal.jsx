@@ -573,7 +573,23 @@ if (command === 'hye' && args[0] === 'create') {
       setIsProcessing(false)
       return
     }
-
+// ============ PATH COMMAND ============
+if (command === 'path') {
+  try {
+    // Get the real Android path for the current cwd
+    const relativePath = cwd.replace('/HYE-Projects', '')
+    const uri = await Filesystem.getUri({
+      path: relativePath || '',
+      directory: Directory.ExternalStorage
+    });
+    addBlock(input, `📂 Actual Android path: ${uri}`, null);
+    addBlock('', `💡 You can open this folder in a file manager that supports scoped storage.`, null);
+  } catch (e) {
+    addBlock(input, null, `Error: ${e.message}`);
+  }
+  setIsProcessing(false);
+  return;
+            }
     // ============ NPM COMMANDS ============
     if (command === 'npm') {
       if (useBackend) {
