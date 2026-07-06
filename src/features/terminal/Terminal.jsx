@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { WebContainer } from '@webcontainer/api'
-import { Filesystem, Directory } from '@capacitor/filesystem'
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 
 import git from 'isomorphic-git'
 import http from 'isomorphic-git/http/web'
@@ -12,9 +12,48 @@ let webcontainerInstance = null
 const fs = new FS('fs')
 const HYE_API = 'https://hye-api.onrender.com'
 
+// ---- Config helpers (stores in Directory.Data/.hyeconfig) ----
+async function readConfig() {
+  try {
+    const result = await Filesystem.readFile({
+      path: '.hyeconfig',
+      directory: Directory.Data,
+      encoding: Encoding.UTF8,
+    })
+    return JSON.parse(result.data)
+  } catch {
+    return {}
+  }
+}
+
+async function writeConfig(config) {
+  await Filesystem.writeFile({
+    path: '.hyeconfig',
+    data: JSON.stringify(config),
+    directory: Directory.Data,
+    encoding: Encoding.UTF8,
+    recursive: true,
+  })
+}
+
+async function getConfigKey(key) {
+  const cfg = await readConfig()
+  return cfg[key] || ''
+}
+
+async function setConfigKey(key, value) {
+  const cfg = await readConfig()
+  if (value === undefined || value === null || value === '') {
+    delete cfg[key]
+  } else {
+    cfg[key] = value
+  }
+  await writeConfig(cfg)
+}
+
 const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const [blocks, setBlocks] = useState([])
-  const [cwd, setCwd] = useState('') // Start at root of external storage
+  const [cwd, setCwd] = useState('')
   const [history, setHistory] = useState([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -22,6 +61,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const [wcBooted, setWcBooted] = useState(false)
   const [notification, setNotification] = useState(null)
   const [hint, setHint] = useState(null)
+  const [showSetup, setShowSetup] = useState(false)
+  const [setupName, setSetupName] = useState('')
+  const [setupEmail, setSetupEmail] = useState('')
 
   const terminalRef = useRef(null)
   const promptInputRef = useRef(null)
@@ -29,7 +71,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   const hasBooted = useRef(false)
   const projectCache = useRef({})
 
-  // Detect if we should use backend
   const shouldUseBackend = () => {
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     const hasWebContainer = typeof SharedArrayBuffer !== 'undefined'
@@ -49,33 +90,33 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       const timeout = setTimeout(() => controller.abort(), 5000)
       await fetch(`${HYE_API}/`, { method: 'GET', signal: controller.signal }).catch(() => {})
       clearTimeout(timeout)
-      addBlock('', '✅ Backend ready', null)
+      addBlock('', 'Backend ready', null)
     } catch (e) {
-      addBlock('', '⚠️ Backend may be slow. First command might take 30s.', null)
+      addBlock('', 'Backend may be slow. First command might take 30s.', null)
     }
   }
 
-  const runBackendExec = async (cmd, projectName = '') => {
+  const runBackendExec = async (cmd, cwdPath = '') => {
     try {
+      const [user_name, user_email] = await Promise.all([
+        getConfigKey('user.name'),
+        getConfigKey('user.email')
+      ])
       const res = await fetch(`${HYE_API}/exec`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cmd,
-          projectName,
-          cwd: cwd.replace(/^\/+/, '')
+          cwd: cwdPath || cwd.replace(/^\/+/, ''),
+          user_id: user_email,
+          user_name,
+          user_email
         })
       })
       return await res.json()
     } catch (e) {
       return { stdout: '', stderr: `Backend error: ${e.message}. Is Render deployed?`, code: 1 }
     }
-  }
-
-  const getProjectName = () => {
-    if (!cwd) return ''
-    const parts = cwd.split('/').filter(Boolean)
-    return parts[parts.length - 1] || ''
   }
 
   // ============ WEB DIRECTORY PICKER ============
@@ -94,7 +135,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           return
         }
         const folderName = files[0].webkitRelativePath.split('/')[0]
-        addBlock('', `📁 Importing ${folderName} (${files.length} files)...`, null)
+        addBlock('', `Importing ${folderName} (${files.length} files)...`, null)
         let successCount = 0, failCount = 0
         for (const file of files) {
           try {
@@ -105,6 +146,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
                 path: `${cwd}/${folderName}/${relativePath}`,
                 data: content,
                 directory: Directory.ExternalStorage,
+                encoding: Encoding.UTF8,
                 recursive: true
               })
               successCount++
@@ -118,10 +160,10 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             console.log('Failed to save:', file.name, err)
           }
         }
-        addBlock('', `✅ Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
-        addBlock('', `📁 Location: ${cwd}/${folderName}/`, null)
+        addBlock('', `Saved ${successCount} files${failCount > 0 ? `, ${failCount} failed` : ''}`, null)
+        addBlock('', `Location: ${cwd}/${folderName}/`, null)
         if (!isCapacitorAvailable()) {
-          addBlock('', `⚠️ Running in browser - files in memory only`, null)
+          addBlock('', 'Running in browser - files in memory only', null)
         }
         resolve(folderName)
       }
@@ -131,12 +173,12 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
   }
 
   const handleOpenPicker = async () => {
-    addBlock('hye import', '📂 Opening folder picker...', null)
+    addBlock('hye import', 'Opening folder picker...', null)
     try {
       const result = await useWebDirectoryPicker()
       if (result) {
         setCwd(`${cwd}/${result}`)
-        addBlock('', `✅ Imported to ${cwd}/${result}/`, null)
+        addBlock('', `Imported to ${cwd}/${result}/`, null)
       }
     } catch (e) {
       if (e.message === 'canceled') {
@@ -154,16 +196,24 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     const boot = async () => {
       if (shouldUseBackend()) {
-        setNotification({ type: 'booting', text: '🟡 Waking backend...' })
+        setNotification({ type: 'booting', text: 'Waking backend...' })
         prewarmBackend()
         try {
           await Filesystem.mkdir({ path: '', directory: Directory.ExternalStorage, recursive: true })
         } catch (e) { console.log('FS setup:', e) }
-        setNotification({ type: 'success', text: '🟢 Terminal ready - Backend mode' })
+        setNotification({ type: 'success', text: 'Terminal ready - Backend mode' })
         setTimeout(() => setNotification(null), 3000)
-        setHint('💡 Type "npm --version" to test')
+        setHint('Type "npm --version" to test')
         setTimeout(() => setHint(null), 8000)
         setWcBooted(true)
+
+        // Check if Git identity is set
+        const name = await getConfigKey('user.name')
+        const email = await getConfigKey('user.email')
+        if (!name || !email) {
+          setShowSetup(true)
+          setIsProcessing(true)
+        }
         return
       }
 
@@ -172,9 +222,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       wcRef.current = webcontainerInstance
       try { await wcRef.current.fs.readdir('/home') }
       catch { await wcRef.current.fs.mkdir('/home', { recursive: true }) }
-      setNotification({ type: 'success', text: '🟢 Terminal ready with git + npm + npx' })
+      setNotification({ type: 'success', text: 'Terminal ready with git + npm + npx' })
       setTimeout(() => setNotification(null), 4000)
-      setHint('💡 Type "help" for commands')
+      setHint('Type "help" for commands')
       setTimeout(() => setHint(null), 10000)
       setWcBooted(true)
     }
@@ -247,6 +297,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             path: `${cwd}/${fullPath.replace('/home/', '')}`,
             data: content,
             directory: Directory.ExternalStorage,
+            encoding: Encoding.UTF8,
             recursive: true
           })
         }
@@ -317,7 +368,8 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         } else {
           const content = await Filesystem.readFile({
             path: `${basePath}/${entry.name}`,
-            directory: Directory.ExternalStorage
+            directory: Directory.ExternalStorage,
+            encoding: Encoding.UTF8
           })
           const relPath = basePath ? `${basePath}/${entry.name}` : entry.name
           result[relPath] = typeof content.data === 'string' ? content.data : content.data
@@ -329,44 +381,31 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     return result
   }
 
-  // ============ SYNC TO BACKEND (FROM CURRENT CWD) ============
+  // ============ SYNC TO BACKEND (USES cwd + user_id) ============
   const syncProjectToBackend = async () => {
-    const projectName = getProjectName()
-    if (!projectName) {
-      addBlock('', null, 'No project folder selected. Use cd to enter a folder.')
+    if (!cwd) {
+      addBlock('', null, 'No current directory.')
       return false
     }
-
-    addBlock('', '📤 Syncing files to backend...', null)
+    addBlock('', 'Syncing files to backend...', null)
     try {
-      let files = {}
-
-      // 1. Try memory cache (if files were created via hye create)
-      if (projectCache.current[projectName]) {
-        files = projectCache.current[projectName]
-        addBlock('', `📦 Using cached files (${Object.keys(files).length} files)`, null)
-      }
-      // 2. Read from Capacitor from current cwd
-      else if (isCapacitorAvailable()) {
-        files = await readAllFilesFromCapacitor(cwd)
-      }
-      // 3. Fallback to WebContainer
-      else if (wcRef.current) {
-        files = await readAllFilesFromWebContainer(`/home/${projectName}`)
-      }
-
+      const files = await readAllFilesFromCapacitor(cwd)
       if (Object.keys(files).length === 0) {
         addBlock('', null, 'No files found to sync')
         return false
       }
-
+      const user_email = await getConfigKey('user.email')
       const res = await fetch(`${HYE_API}/sync-project`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName, files })
+        body: JSON.stringify({
+          cwd: cwd.replace(/^\/+/, ''),
+          files,
+          user_id: user_email
+        })
       })
       if (!res.ok) throw new Error('Sync failed')
-      addBlock('', '✅ Synced to backend', null)
+      addBlock('', 'Synced to backend', null)
       return true
     } catch (e) {
       addBlock('', null, `Sync error: ${e.message}`)
@@ -376,7 +415,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
   // ============ HANDLE COMMAND ============
   const handleCommand = async (input) => {
-    if (!input.trim() || !wcBooted) return
+    if (!input.trim() || !wcBooted || isProcessing) return
     setHint(null)
     setIsProcessing(true)
     setCurrentInput('')
@@ -386,6 +425,65 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     const [command, ...args] = input.trim().split(/\s+/)
     const useBackend = shouldUseBackend()
+
+    // ============ HYE CONFIG ============
+    if (command === 'hye' && args[0] === 'config') {
+      const subCmd = args[1]
+      if (!subCmd || subCmd === '--list') {
+        const name = await getConfigKey('user.name')
+        const email = await getConfigKey('user.email')
+        addBlock(input, `user.name: ${name || '(not set)'}`, null)
+        addBlock('', `user.email: ${email || '(not set)'}`, null)
+        if (!subCmd) {
+          addBlock('', '', null)
+          addBlock('', 'Usage:', null)
+          addBlock('', '  hye config user.name "Your Name"', null)
+          addBlock('', '  hye config user.email "you@example.com"', null)
+          addBlock('', '  hye config --list     (show current)', null)
+          addBlock('', '  hye config --reset    (clear both)', null)
+        }
+        setIsProcessing(false)
+        return
+      }
+
+      if (subCmd === '--reset') {
+        await setConfigKey('user.name', '')
+        await setConfigKey('user.email', '')
+        addBlock(input, 'Config cleared. Restart terminal to set new identity.', null)
+        setShowSetup(true)
+        setIsProcessing(true)
+        setIsProcessing(false)
+        return
+      }
+
+      if (subCmd === 'user.name') {
+        const value = args.slice(2).join(' ')
+        if (!value) {
+          addBlock(input, null, 'Error: Name required. Usage: hye config user.name "John Doe"')
+        } else {
+          await setConfigKey('user.name', value)
+          addBlock(input, `user.name set to: ${value}`, null)
+        }
+        setIsProcessing(false)
+        return
+      }
+
+      if (subCmd === 'user.email') {
+        const value = args.slice(2).join(' ')
+        if (!value || !value.includes('@')) {
+          addBlock(input, null, 'Error: Valid email required. Usage: hye config user.email "john@example.com"')
+        } else {
+          await setConfigKey('user.email', value)
+          addBlock(input, `user.email set to: ${value}`, null)
+        }
+        setIsProcessing(false)
+        return
+      }
+
+      addBlock(input, null, `Unknown config option: ${subCmd}`)
+      setIsProcessing(false)
+      return
+    }
 
     // ============ HYE CREATE ============
     if (command === 'hye' && args[0] === 'create') {
@@ -401,10 +499,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
       const safeName = projectName.replace(/[^a-zA-Z0-9_-]/g, '')
       if (safeName !== projectName) {
-        addBlock('', `⚠️ Project name sanitized to: ${safeName}`, null)
+        addBlock('', `Project name sanitized to: ${safeName}`, null)
       }
 
-      // Check if project already exists in current directory
       let exists = false
       if (isCapacitorAvailable()) {
         try {
@@ -423,7 +520,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       }
 
       if (exists) {
-        addBlock('', `⚠️ Project "${safeName}" already exists. Removing old version...`, null)
+        addBlock('', `Project "${safeName}" already exists. Removing old version...`, null)
         if (isCapacitorAvailable()) {
           try {
             await Filesystem.rmdir({
@@ -438,11 +535,11 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             await wcRef.current.fs.rm(`/home/${safeName}`, { recursive: true, force: true })
           } catch (e) {}
         }
-        addBlock('', `🗑️ Old project removed.`, null)
+        addBlock('', 'Old project removed.', null)
         delete projectCache.current[safeName]
       }
 
-      addBlock(input, `📦 Creating ${template} project in ${cwd || '/'}...`, null)
+      addBlock(input, `Creating ${template} project in ${cwd || '/'}...`, null)
 
       try {
         const response = await fetch(`${HYE_API}/hye-create`, {
@@ -474,14 +571,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
         const files = result.files
         if (!files || typeof files !== 'object' || Object.keys(files).length === 0) {
-          addBlock('', null, `No files received from backend.`)
+          addBlock('', null, 'No files received from backend.')
           setIsProcessing(false)
           return
         }
 
-        addBlock('', `📥 Received ${Object.keys(files).length} files...`, null)
+        addBlock('', `Received ${Object.keys(files).length} files...`, null)
 
-        // Create project directory in current cwd
         if (isCapacitorAvailable()) {
           try {
             await Filesystem.mkdir({
@@ -494,14 +590,12 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
         }
 
-        // Cache the files
         projectCache.current[safeName] = files
 
         let savedCount = 0
         for (const [filePath, content] of Object.entries(files)) {
           if (!content && content !== '') continue
           try {
-            // Write to WebContainer
             if (wcRef.current) {
               const dirPath = filePath.split('/').slice(0, -1).join('/')
               if (dirPath) {
@@ -510,7 +604,6 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
               await wcRef.current.fs.writeFile(`/home/${safeName}/${filePath}`, content)
             }
 
-            // Write to Capacitor (with directory creation)
             if (isCapacitorAvailable()) {
               const dirPath = filePath.split('/').slice(0, -1).join('/')
               if (dirPath) {
@@ -524,6 +617,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
                 path: `${cwd}/${safeName}/${filePath}`,
                 data: content,
                 directory: Directory.ExternalStorage,
+                encoding: Encoding.UTF8,
                 recursive: true
               })
             }
@@ -533,14 +627,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
         }
 
-        addBlock('', `✅ Created ${savedCount} files`, null)
-        addBlock('', `📁 ${cwd}/${safeName}/`, null)
-        addBlock('', `💾 Saved to your phone storage!`, null)
-        addBlock('', `📝 Next: cd ${safeName} && npm install`, null)
+        addBlock('', `Created ${savedCount} files`, null)
+        addBlock('', `${cwd}/${safeName}/`, null)
+        addBlock('', 'Saved to your phone storage!', null)
+        addBlock('', `Next: cd ${safeName} && npm install`, null)
 
         setCwd(`${cwd}/${safeName}`)
 
-        // Auto-sync to backend so npm commands work
         if (useBackend) {
           await syncProjectToBackend()
         }
@@ -561,14 +654,14 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       return
     }
 
-        // ============ HYE IMPORT ============
+    // ============ HYE IMPORT ============
     if (command === 'hye' && args[0] === 'import') {
       await handleOpenPicker()
       setIsProcessing(false)
       return
     }
 
-    // ============ OPEN (list directories/files in current cwd) ============
+    // ============ OPEN ============
     if (command === 'open') {
       if (useBackend && isCapacitorAvailable()) {
         try {
@@ -576,7 +669,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             path: cwd || '',
             directory: Directory.ExternalStorage
           })
-          addBlock(input, '📁 Contents:', null)
+          addBlock(input, 'Contents:', null)
           result.files.forEach(f => addBlock('', ` ${f.type === 'directory' ? '📁' : '📄'} ${f.name}`, null))
         } catch {
           addBlock(input, null, 'Cannot read directory')
@@ -584,7 +677,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
       } else {
         try {
           const dir = await wcRef.current.fs.readdir('/home')
-          addBlock(input, '📁 Contents:', null)
+          addBlock(input, 'Contents:', null)
           dir.forEach(d => addBlock('', ` ${d}`, null))
         } catch {
           addBlock(input, null, 'No projects. Create one: hye create react myapp')
@@ -602,10 +695,10 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           directory: Directory.ExternalStorage
         })
         const uriString = uriResult.uri || uriResult.toString()
-        addBlock(input, `📂 Content URI: ${uriString}`, null)
+        addBlock(input, `Content URI: ${uriString}`, null)
         const fsPath = `/storage/emulated/0/Android/data/${window?.Capacitor?.getAppId?.() || 'com.hye.terminal'}/files/${cwd || ''}`
-        addBlock('', `📁 Likely filesystem path: ${fsPath}`, null)
-        addBlock('', `💡 Use a file manager that supports content URIs.`, null)
+        addBlock('', `Likely filesystem path: ${fsPath}`, null)
+        addBlock('', 'Use a file manager that supports content URIs.', null)
       } catch (e) {
         addBlock(input, null, `Error: ${e.message}`)
       }
@@ -624,16 +717,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           return
         }
         if (newPath.startsWith('/')) {
-          // absolute path – just use it
           setCwd(newPath)
         } else {
-          // relative path
           const base = cwd ? `${cwd}/` : ''
           setCwd(`${base}${newPath}`)
         }
         addBlock(input, '', null)
       } else {
-        // WebContainer cd
         try {
           const proc = await wcRef.current.spawn('cd', args, { cwd: `/home${cwd}` })
           let output = ''
@@ -659,14 +749,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             const names = files.map(f => f.name).join('  ')
             addBlock(input, `📁 ${names}`, null)
           } else {
-            addBlock(input, '📁 (empty directory)', null)
+            addBlock(input, '(empty directory)', null)
           }
         } catch (e) {
           addBlock(input, null, `Error: ${e.message}`)
         }
       } else if (useBackend) {
-        // fallback to backend exec for non-capacitor
-        const result = await runBackendExec(input, getProjectName())
+        const result = await runBackendExec(input)
         if (result.stdout) addBlock(input, result.stdout.trim(), null)
         else addBlock(input, '', result.stderr || null)
       } else {
@@ -685,59 +774,52 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     // ============ NPM ============
     if (command === 'npm') {
       if (useBackend) {
-        const projectName = getProjectName()
-        if (projectName && !input.includes('--version')) {
+        // Auto-sync before npm commands (except --version)
+        if (!input.includes('--version')) {
           await syncProjectToBackend()
         }
         addBlock(input, `Running: ${input}`, null)
-        try {
-          const res = await fetch(`${HYE_API}/exec`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              cmd: input,
-              projectName: projectName,
-              cwd: cwd.replace(/^\/+/, '')
-            })
-          })
-          const result = await res.json()
-          if (result.stdout) addBlock('', result.stdout.trim(), null)
-          if (result.stderr) addBlock('', null, result.stderr.trim())
-          if (result.code === 0) addBlock('', '✅ Done', null)
-        } catch (e) {
-          addBlock('', null, `Exec error: ${e.message}`)
+        const result = await runBackendExec(input)
+        if (result.stdout) addBlock('', result.stdout.trim(), null)
+        if (result.stderr) addBlock('', null, result.stderr.trim())
+        if (result.code === 0) {
+          addBlock('', 'Done', null)
+          // Suggest sync after install
+          if (args[0] === 'install') {
+            addBlock('', 'Dependencies installed on backend. To preview: npm run dev', null)
+          }
         }
       } else {
-        // WebContainer npm commands (keep existing logic)
+        // WebContainer npm commands (browser fallback)
         const fullPath = `/home/${cwd}`
         if (args[0] === 'install' && args[1]) {
           const pkg = args[1]?.replace(/@.*/, '')
           const sizeMB = await getPackageSize(pkg)
           addBlock(input, `Checking ${pkg}... ${sizeMB}MB`, null)
           if (sizeMB > 500) {
-            addBlock('', null, `🛑 BLOCKED: ${pkg} is ${sizeMB}MB. Too heavy for mobile.`)
+            addBlock('', null, `BLOCKED: ${pkg} is ${sizeMB}MB. Too heavy for mobile.`)
             setIsProcessing(false)
             return
           }
-          if (sizeMB > 10) addBlock('', `⚠️ WARNING: ${pkg} is ${sizeMB}MB`, null)
+          if (sizeMB > 10) addBlock('', `WARNING: ${pkg} is ${sizeMB}MB`, null)
           try {
             const proc = await wcRef.current.spawn('npm', ['install', args[1]], { cwd: fullPath })
             proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
             const code = await proc.exit
             if (code === 0) {
               await syncToPhone(fullPath)
-              addBlock('', `✅ ${pkg} installed`, null)
+              addBlock('', `${pkg} installed`, null)
             }
           } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
         }
         else if (args[0] === 'install' && !args[1]) {
-          addBlock(input, `Installing from package.json...`, null)
+          addBlock(input, 'Installing from package.json...', null)
           try {
             const proc = await wcRef.current.spawn('npm', ['install'], { cwd: fullPath })
             proc.output.pipeTo(new WritableStream({ write(data) { addBlock('', data, null) } }))
             await proc.exit
             await syncToPhone(fullPath)
-            addBlock('', `✅ Dependencies installed`, null)
+            addBlock('', 'Dependencies installed', null)
           } catch (e) { addBlock('', null, `Install error: ${e.message}`) }
         }
         else if (args[0] === 'run') {
@@ -748,7 +830,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
             proc.output.pipeTo(new WritableStream({
               write(data) {
                 addBlock('', data, null)
-                if (data.includes('localhost:')) addBlock('', `🌐 Keep app open to preview`, null)
+                if (data.includes('localhost:')) addBlock('', 'Keep app open to preview', null)
               }
             }))
             await proc.exit
@@ -764,14 +846,13 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           } catch (e) { addBlock('', null, `Version error: ${e.message}`) }
         }
         else {
-          addBlock(input, null, `Unknown npm command. Type 'help'`)
+          addBlock(input, null, 'Unknown npm command. Type "help"')
         }
       }
       setIsProcessing(false)
       return
-    }
-
-    // ============ NPX ============
+            }
+        // ============ NPX ============
     if (command === 'npx') {
       if (!args[0]) {
         addBlock(input, null, 'Usage: npx <package>')
@@ -779,26 +860,12 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         return
       }
       if (useBackend) {
-        const projectName = getProjectName()
-        if (projectName) await syncProjectToBackend()
+        await syncProjectToBackend()
         addBlock(input, `Running npx ${args[0]}...`, null)
-        try {
-          const res = await fetch(`${HYE_API}/exec`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              cmd: input,
-              projectName: projectName,
-              cwd: cwd.replace(/^\/+/, '')
-            })
-          })
-          const result = await res.json()
-          if (result.stdout) addBlock('', result.stdout.trim(), null)
-          if (result.stderr) addBlock('', null, result.stderr.trim())
-          if (result.code === 0) addBlock('', `✅ npx completed`, null)
-        } catch (e) {
-          addBlock('', null, `Exec error: ${e.message}`)
-        }
+        const result = await runBackendExec(input)
+        if (result.stdout) addBlock('', result.stdout.trim(), null)
+        if (result.stderr) addBlock('', null, result.stderr.trim())
+        if (result.code === 0) addBlock('', 'npx completed', null)
       } else {
         const fullPath = `/home/${cwd}`
         const pkg = args[0]
@@ -809,7 +876,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           const code = await proc.exit
           if (code === 0) {
             await syncToPhone(fullPath)
-            addBlock('', `✅ npx ${pkg} completed`, null)
+            addBlock('', `npx ${pkg} completed`, null)
           } else {
             addBlock('', null, `npx exited with code ${code}`)
           }
@@ -824,25 +891,17 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
     // ============ GIT ============
     if (command === 'git') {
       if (useBackend) {
-        const projectName = getProjectName()
-        if (projectName) await syncProjectToBackend()
+        await syncProjectToBackend()
         addBlock(input, `Running: ${input}`, null)
-        try {
-          const res = await fetch(`${HYE_API}/exec`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              cmd: input,
-              projectName: projectName,
-              cwd: cwd.replace(/^\/+/, '')
-            })
-          })
-          const result = await res.json()
-          if (result.stdout) addBlock('', result.stdout.trim(), null)
-          if (result.stderr) addBlock('', null, result.stderr.trim())
-          if (result.code === 0) addBlock('', '💾 Synced', null)
-        } catch (e) {
-          addBlock('', null, `Exec error: ${e.message}`)
+        const result = await runBackendExec(input)
+        if (result.stdout) addBlock('', result.stdout.trim(), null)
+        if (result.stderr) addBlock('', null, result.stderr.trim())
+        if (result.code === 0) {
+          addBlock('', 'Synced', null)
+          // Remind about cleanup after push
+          if (args[0] === 'push') {
+            addBlock('', 'Tip: To free backend storage after push, run: hye clean-backend-modules (if you have the endpoint)', null)
+          }
         }
       } else {
         const fullPath = `/home/${cwd}`
@@ -874,7 +933,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
               for (const [filepath, head, workdir, stage] of status) {
                 if (workdir !== head || workdir !== stage) await git.add({ fs, dir: fullPath, filepath })
               }
-              addBlock('', `Added all changes`, null)
+              addBlock('', 'Added all changes', null)
             } else if (args[1]) {
               await git.add({ fs, dir: fullPath, filepath: args[1] })
               addBlock('', `Added ${args[1]}`, null)
@@ -891,7 +950,7 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
           }
           if (['init', 'add', 'commit'].includes(args[0])) {
             await syncToPhone(fullPath)
-            addBlock('', `💾 Synced to phone`, null)
+            addBlock('', 'Synced to phone', null)
           }
         } catch (e) {
           addBlock('', null, `Git error: ${e.message}`)
@@ -908,23 +967,9 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         if (command === 'pwd') {
           addBlock(input, cwd || '/', null)
         } else {
-          const projectName = getProjectName()
-          try {
-            const res = await fetch(`${HYE_API}/exec`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                cmd: input,
-                projectName: projectName,
-                cwd: cwd.replace(/^\/+/, '')
-              })
-            })
-            const result = await res.json()
-            if (result.stdout) addBlock(input, result.stdout.trim(), null)
-            else addBlock(input, '', result.stderr || null)
-          } catch (e) {
-            addBlock(input, null, e.message)
-          }
+          const result = await runBackendExec(input)
+          if (result.stdout) addBlock(input, result.stdout.trim(), null)
+          else addBlock(input, '', result.stderr || null)
         }
       } else {
         const fullPath = `/home/${cwd}`
@@ -943,16 +988,16 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
 
     // ============ HELP ============
     if (command === 'help') {
-      addBlock(input, `HYE Terminal Commands:`, null)
-      addBlock('', `hye create <react|vue|vanilla> [name] - Create project in current folder`, null)
-      addBlock('', `hye sync - Sync current folder to backend`, null)
-      addBlock('', `hye import - Import folder from phone into current folder`, null)
-      addBlock('', `npm install <pkg> / run <script> - Run npm commands (auto-sync)`, null)
-      addBlock('', `npx <package> - Run package binaries`, null)
-      addBlock('', `git init/add/commit/status/log/branch/checkout/reset/clone/push/pull`, null)
-      addBlock('', `open - List contents of current folder`, null)
-      addBlock('', `ls cd mkdir rm -rf cat - File ops`, null)
-      addBlock('', `path - Show Android content URI for current folder`, null)
+      addBlock(input, 'HYE Terminal Commands:', null)
+      addBlock('', 'hye create <react|vue|vanilla> [name] - Create project', null)
+      addBlock('', 'hye sync - Sync source code to backend', null)
+      addBlock('', 'hye import - Import folder from phone into current folder', null)
+      addBlock('', 'npm install <pkg> / run <script> - Run npm commands (auto-sync)', null)
+      addBlock('', 'npx <package> - Run package binaries', null)
+      addBlock('', 'git init/add/commit/status/push - Version control', null)
+      addBlock('', 'open, ls, cd, mkdir, rm, pwd - File ops', null)
+      addBlock('', 'hye config - Manage Git identity (user.name, user.email)', null)
+      addBlock('', 'path - Show Android content URI for current folder', null)
       setIsProcessing(false)
       return
     }
@@ -984,6 +1029,94 @@ const Terminal = forwardRef(({ theme, onCommand }, ref) => {
         value={currentInput}
         onChange={setCurrentInput}
       />
+
+      {/* ----- SETUP MODAL ----- */}
+      {showSetup && (
+        <div className="setup-overlay" style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+        }}>
+          <div className="setup-modal" style={{
+            background: '#1e1e1e',
+            padding: '24px',
+            borderRadius: '8px',
+            border: '1px solid #3c3c3c',
+            maxWidth: '400px',
+            width: '90%',
+          }}>
+            <h3 style={{ color: '#58a6ff', margin: '0 0 8px' }}>Setup Git Identity</h3>
+            <p style={{ color: '#ccc', fontSize: '13px', margin: '0 0 16px' }}>
+              Git requires a name and email to identify your commits.
+              These will also be used to isolate your projects on the backend.
+              You can change them later with:<br />
+              <code style={{ color: '#4ec9b0' }}>hye config user.name "New Name"</code><br />
+              <code style={{ color: '#4ec9b0' }}>hye config user.email "new@email.com"</code>
+            </p>
+            <input
+              type="text"
+              placeholder="Your Name"
+              value={setupName}
+              onChange={e => setSetupName(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px',
+                marginBottom: '12px',
+                background: '#0a0a0a',
+                border: '1px solid #3c3c3c',
+                color: '#eee',
+                borderRadius: '4px',
+                boxSizing: 'border-box',
+              }}
+            />
+            <input
+              type="email"
+              placeholder="Your Email"
+              value={setupEmail}
+              onChange={e => setSetupEmail(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px',
+                marginBottom: '12px',
+                background: '#0a0a0a',
+                border: '1px solid #3c3c3c',
+                color: '#eee',
+                borderRadius: '4px',
+                boxSizing: 'border-box',
+              }}
+            />
+            <button
+              onClick={async () => {
+                if (!setupName.trim() || !setupEmail.trim() || !setupEmail.includes('@')) {
+                  alert('Both fields are required and email must be valid.');
+                  return;
+                }
+                await setConfigKey('user.name', setupName.trim());
+                await setConfigKey('user.email', setupEmail.trim());
+                setShowSetup(false);
+                setIsProcessing(false);
+                addBlock('system', 'Identity saved. You can change it anytime with: hye config user.name "New Name"', null);
+              }}
+              style={{
+                width: '100%',
+                padding: '10px',
+                background: '#58a6ff',
+                border: 'none',
+                borderRadius: '4px',
+                color: '#000',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+              }}
+            >
+              Save & Continue
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 })
