@@ -1,0 +1,16 @@
+# Dependencies
+node_modules
+
+# Production
+dist
+
+# Android
+android/app/build
+android/.gradle
+android/captures
+*.apk
+*.aab
+
+# Misc
+.DS_Store
+*.local

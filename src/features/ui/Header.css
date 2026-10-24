@@ -1,0 +1,221 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
+
+.header {
+  flex-shrink: 0;
+  margin: 12px;
+  margin-bottom: 0;
+  padding: 12px 16px;
+  background: var(--glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  z-index: 100;
+  font-family: 'Fira Code', Consolas, 'Courier New', monospace;
+}
+
+/* NEW: Top row with title */
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ec9b0;
+  box-shadow: 0 0 8px rgba(78, 201, 176, 0.6);
+  flex-shrink: 0;
+}
+
+.status-dot.active {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.header-title {
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 14px;
+  color: #d4d4d4;
+}
+
+/* NEW: Actions wrap automatically on mobile */
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-muted);
+  font-family: 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.header-btn:hover {
+  background: var(--glass-hover);
+  border-color: #4ec9b0;
+  color: #4ec9b0;
+}
+
+.header-btn.primary {
+  background: rgba(78, 201, 176, 0.15);
+  border-color: #4ec9b0;
+  color: #4ec9b0;
+}
+
+.header-btn.primary:hover {
+  background: rgba(78, 201, 176, 0.25);
+}
+
+.header-btn.icon-btn {
+  width: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.dropdown-wrapper {
+  position: relative;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: rgba(30, 30, 30, 0.95);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  min-width: 140px;
+  z-index: 200;
+  overflow: hidden;
+}
+
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dropdown-item:hover {
+  background: var(--glass-hover);
+  color: #4ec9b0;
+}
+
+.shortcut-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: rgba(30, 30, 30, 0.95);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 12px;
+  min-width: 240px;
+  z-index: 200;
+}
+
+.term-btn {
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  color: #dcdcaa;
+  border-radius: 4px;
+  font-family: 'Fira Code', Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.term-btn:hover {
+  background: var(--glass-hover);
+  border-color: #4ec9b0;
+  color: #4ec9b0;
+}
+
+/* DESKTOP: Make it one line when space dey */
+@media (min-width: 768px) {
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    height: 48px;
+  }
+  
+  .header-top {
+    margin-bottom: 0;
+  }
+  
+  .header-title {
+    font-size: 15px;
+  }
+  
+  .header-actions {
+    flex-wrap: nowrap;
+  }
+}
+
+/* SMALL ANDROID: Make buttons smaller */
+@media (max-width: 380px) {
+  .header {
+    padding: 10px 12px;
+  }
+  
+  .header-btn {
+    font-size: 11px;
+    padding: 0 8px;
+    height: 30px;
+  }
+  
+  .header-title {
+    font-size: 13px;
+  }
+  
+  .header-actions {
+    gap: 4px;
+  }
+}

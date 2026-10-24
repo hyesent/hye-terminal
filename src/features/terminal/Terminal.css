@@ -1,0 +1,217 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+.terminal {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: 12px;
+  margin-top: var(--gap);
+  padding: 16px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2);
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+.terminal-lines {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+  scroll-behavior: smooth;
+}
+
+.terminal-lines::-webkit-scrollbar {
+  width: 6px;
+}
+.terminal-lines::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.terminal-lines::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.command-block {
+  margin-bottom: 16px;
+  animation: slideIn 0.2s ease-out;
+  border-left: 0.5px solid rgba(78, 201, 176, 0.15);
+  padding-left: 12px;
+}
+
+.command-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.ps-prefix { 
+  color: var(--prompt); 
+  opacity: 0.7; 
+}
+
+.path-segment { 
+  color: var(--cwd); 
+  font-weight: 600;
+}
+
+.prompt-char { 
+  color: var(--prompt); 
+  font-weight: 700;
+}
+
+.command-text { 
+  color: var(--fg); 
+}
+
+.output-content {
+  padding-left: 24px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.output-content.error {
+  color: var(--error);
+  text-shadow: 0 0 12px rgba(255, 71, 87, 0.4);
+  border-left: 0.5px solid rgba(255, 71, 87, 0.3);
+  padding-left: 12px;
+}
+
+.prompt-container {
+  flex-shrink: 0;
+  position: relative;
+  margin-top: var(--gap);
+}
+
+.suggestions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: rgba(20, 20, 32, 0.9);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  z-index: 50;
+}
+
+.suggestion-item {
+  padding: 4px 10px;
+  background: var(--glass);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.prompt-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+    0 2px 12px rgba(0, 0, 0, 0.15);
+}
+
+.prompt-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-size: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  caret-color: var(--caret);
+}
+
+.prompt-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Terminal notifications - thin borders */
+.terminal-notification {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 8px 14px;
+  background: rgba(30, 30, 30, 0.95);
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 12px;
+  z-index: 50;
+  backdrop-filter: blur(10px);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.terminal-notification.success {
+  border-color: rgba(78, 201, 176, 0.3);
+  color: #4ec9b0;
+}
+
+.terminal-notification.booting {
+  border-color: rgba(255, 204, 0, 0.3);
+  color: #ffcc00;
+}
+
+/* Terminal hint - thin border */
+.terminal-hint {
+  position: absolute;
+  bottom: 60px;
+  left: 16px;
+  padding: 6px 12px;
+  background: rgba(78, 201, 176, 0.1);
+  border: 0.5px solid rgba(78, 201, 176, 0.2);
+  border-radius: 4px;
+  font-size: 11px;
+  color: #4ec9b0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Mobile: Even cleaner */
+@media (max-width: 380px) {
+  .terminal {
+    padding: 12px;
+    border-width: 0.5px;
+  }
+  
+  .command-line {
+    font-size: 13px;
+  }
+  
+  .output-content {
+    font-size: 12px;
+    padding-left: 20px;
+  }
+  
+  .prompt-line {
+    padding: 10px 12px;
+  }
+  
+  .prompt-input {
+    font-size: 13px;
+  }
+}
