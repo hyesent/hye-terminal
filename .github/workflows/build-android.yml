@@ -46,7 +46,10 @@ jobs:
         working-directory: .ci/libtermux-sdk
         run: |
           chmod +x gradlew
-          ./gradlew :core:publishReleasePublicationToMavenLocal :bootstrap-arm:publishReleasePublicationToMavenLocal :bootstrap-arm64:publishReleasePublicationToMavenLocal :bootstrap-x86:publishReleasePublicationToMavenLocal :bootstrap-x86_64:publishReleasePublicationToMavenLocal --no-daemon
+          # LibTermux uses the Vanniktech Maven Publish plugin. Its documented
+          # local-publish task is publishToMavenLocal, not the older
+          # publishReleasePublicationToMavenLocal task name.
+          ./gradlew :core:publishToMavenLocal :bootstrap-arm:publishToMavenLocal :bootstrap-arm64:publishToMavenLocal :bootstrap-x86:publishToMavenLocal :bootstrap-x86_64:publishToMavenLocal --no-daemon
 
       - name: Install dependencies
         run: npm ci
