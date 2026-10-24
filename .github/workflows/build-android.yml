@@ -32,9 +32,7 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-36 platforms;android-34 build-tools;36.0.0 build-tools;34.0.0 ndk;27.0.12077973 cmake;3.22.1'
 
-      # The upstream LibTermux coordinates currently return 404 from JitPack.
-      # Build the public source and publish its actual artifacts to this runner's
-      # local Maven repository instead of guessing release/SNAPSHOT coordinates.
+      # Download the upstream LibTermux source.
       - name: Checkout LibTermux SDK source
         uses: actions/checkout@v4
         with:
@@ -42,14 +40,20 @@ jobs:
           ref: main
           path: .ci/libtermux-sdk
 
+      # Build and publish the SDK to the local Maven repository.
+      # Skip Maven publication signing because CI has no signing keys.
       - name: Build and publish LibTermux SDK locally
         working-directory: .ci/libtermux-sdk
         run: |
           chmod +x gradlew
-          # LibTermux uses the Vanniktech Maven Publish plugin. Its documented
-          # local-publish task is publishToMavenLocal, not the older
-          # publishReleasePublicationToMavenLocal task name.
-          ./gradlew :core:publishToMavenLocal :bootstrap-arm:publishToMavenLocal :bootstrap-arm64:publishToMavenLocal :bootstrap-x86:publishToMavenLocal :bootstrap-x86_64:publishToMavenLocal --no-daemon
+          ./gradlew \
+            :core:publishToMavenLocal \
+            :bootstrap-arm:publishToMavenLocal \
+            :bootstrap-arm64:publishToMavenLocal \
+            :bootstrap-x86:publishToMavenLocal \
+            :bootstrap-x86_64:publishToMavenLocal \
+            -x signMavenPublication \
+            --no-daemon
 
       - name: Install dependencies
         run: npm ci
@@ -69,6 +73,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
+      # Produce one APK containing all configured Android ABIs.
       - name: Name the single universal APK
         shell: bash
         run: |
