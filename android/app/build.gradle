@@ -16,6 +16,8 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Build one APK containing native libraries for all supported ABIs.
+    // This produces a single app-debug.apk rather than per-architecture APKs.
     buildTypes {
         release {
             minifyEnabled false
@@ -40,9 +42,15 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
-    // Provides an app-private Termux-compatible userspace (Bash, pkg, Git, Node, Python).
-    // Upstream currently labels this SDK experimental; see LINUX_RUNTIME.md.
+    // Built from the upstream source in .github/workflows/build-android.yml and
+    // published to the runner's local Maven repository before this app is built.
     implementation 'com.github.libtermux:libtermux-android:1.0.0'
+    // Each module contributes executable bootstrap binaries for one Android ABI.
+    // Including all four lets the runtime choose the matching bootstrap at install time.
+    implementation 'com.github.libtermux:libtermux-android-bootstrap-arm64:1.0.0'
+    implementation 'com.github.libtermux:libtermux-android-bootstrap-arm:1.0.0'
+    implementation 'com.github.libtermux:libtermux-android-bootstrap-x86_64:1.0.0'
+    implementation 'com.github.libtermux:libtermux-android-bootstrap-x86:1.0.0'
 }
 
 apply from: 'capacitor.build.gradle'

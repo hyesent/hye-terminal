@@ -19,6 +19,8 @@ apply from: "variables.gradle"
 
 allprojects {
     repositories {
+        // Local artifacts published from the upstream LibTermux source build in CI.
+        mavenLocal()
         google()
         mavenCentral()
         // Standalone local Linux userspace SDK. The upstream SDK is experimental;

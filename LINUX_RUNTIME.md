@@ -17,12 +17,14 @@
 - The Linux process adapter still uses log polling rather than a native PTY session. This is not yet a persistent interactive Bash session: shell variables and shell state do not automatically persist between separate commands, and fully interactive terminal applications (for example editors, `top`, REPLs requiring a live TTY, password prompts) still need the SDK's real PTY/session API integrated into the React terminal.
 - Ctrl+C is best-effort process-tree termination; detached child processes may survive depending on the process tree and Android userspace.
 - Package installation output currently arrives after the package-manager call finishes rather than streaming its progress.
-- This source stage has not been built against the upstream SDK or tested on a physical Android device in this environment. Linux initialization, ABI compatibility, package downloads, command execution, and local-server behavior must be verified in an Android build/device test.
+- The upstream SDK artifact URLs documented by the project returned 404 in earlier CI attempts. CI now checks out the upstream source and publishes the core plus all four bootstrap artifacts (ARM64, ARM 32-bit, x86_64, and x86) to the runner-local Maven repository before building HYE Terminal. This workflow change has not yet been confirmed by a successful GitHub Actions run or a physical-device test.
+- The Android build is configured to produce four ABI-specific APKs and one universal APK. Choose `HyeTerminal-arm64-v8a.apk` for most modern Android phones, `HyeTerminal-armeabi-v7a.apk` for 32-bit ARM phones, or the x86 variant for compatible Intel-based devices. The universal APK includes all four architectures but will be larger.
+- Supporting an ABI at packaging time does not guarantee every device can run the Linux environment: the upstream SDK is experimental, and runtime bootstrap selection and native binary execution must be tested on real devices for each ABI.
 
 ## Device acceptance checklist
 
-1. Build the debug APK in an internet-connected Android/Gradle environment and resolve `com.github.libtermux:libtermux-android:1.0.0`.
-2. Install on an Android ARM64 device and run `hye runtime install` once.
+1. Run the GitHub Actions workflow; it builds the upstream LibTermux core and all four ABI bootstrap modules from source and publishes them to the runner-local Maven repository before compiling the app.
+2. Install the matching APK on ARM64, ARM 32-bit, x86_64, and x86 test devices/emulators where available, then run `hye runtime install` once on each.
 3. Run ordinary commands without the `hye linux` prefix: `uname -a`, `bash --version`, `pwd`, `ls -la`.
 4. Install tools with `pkg install git nodejs python curl`, then verify `git --version`, `node --version`, `npm --version`, and `python --version` as ordinary commands.
 5. Start a long-running command such as `python -m http.server 8080`, verify output and process lifetime, then stop it with Ctrl+C.

@@ -28,7 +28,25 @@ jobs:
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 platforms;android-34 build-tools;36.0.0 build-tools;34.0.0 ndk;27.0.12077973 cmake;3.22.1'
+
+      # The upstream LibTermux coordinates currently return 404 from JitPack.
+      # Build the public source and publish its actual artifacts to this runner's
+      # local Maven repository instead of guessing release/SNAPSHOT coordinates.
+      - name: Checkout LibTermux SDK source
+        uses: actions/checkout@v4
+        with:
+          repository: libtermux/libtermux-android
+          ref: main
+          path: .ci/libtermux-sdk
+
+      - name: Build and publish LibTermux SDK locally
+        working-directory: .ci/libtermux-sdk
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:publishReleasePublicationToMavenLocal :bootstrap-arm:publishReleasePublicationToMavenLocal :bootstrap-arm64:publishReleasePublicationToMavenLocal :bootstrap-x86:publishReleasePublicationToMavenLocal :bootstrap-x86_64:publishReleasePublicationToMavenLocal --no-daemon
 
       - name: Install dependencies
         run: npm ci
@@ -48,17 +66,22 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Rename APK to HyeTerminal.apk
-        run: mv android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/HyeTerminal.apk
+      - name: Name the single universal APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_DIR="android/app/build/outputs/apk/debug"
+          test -f "$APK_DIR/app-debug.apk"
+          cp "$APK_DIR/app-debug.apk" "$APK_DIR/HyeTerminal.apk"
+          ls -lh "$APK_DIR/HyeTerminal.apk"
 
-      #  Backup – always available as an artifact
-      - name: Upload APK as artifact
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: HyeTerminal
           path: android/app/build/outputs/apk/debug/HyeTerminal.apk
+          if-no-files-found: error
 
-      #  Upload to GitHub Release (v2)
       - name: Upload APK to Latest Release
         uses: softprops/action-gh-release@v2
         with:
